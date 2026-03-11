@@ -1,23 +1,23 @@
-from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 import random
 import string
-import logging
 import json
 import time
+import logging
+import os
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 
-BOT_TOKEN = "7841222200:AAHzJoRS1p5O_NyI0Px9XT8aW5b0LI9QGjA"
-ADMIN_ID = 6228421196  # ID администратора
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # токен берётся из переменной среды
+ADMIN_ID = 6228421196
 
 DB_FILE = "subscriptions.json"
 
-
-# ================= БАЗА =================
 
 def load_db():
     try:
@@ -26,18 +26,19 @@ def load_db():
     except:
         return {}
 
+
 def save_db(data):
     with open(DB_FILE, "w") as f:
         json.dump(data, f)
+
 
 db = load_db()
 
 
 def has_subscription(user_id):
     user_id = str(user_id)
-    if user_id in db:
-        if db[user_id] > time.time():
-            return True
+    if user_id in db and db[user_id] > time.time():
+        return True
     return False
 
 
@@ -47,49 +48,33 @@ def add_subscription(user_id, days):
     save_db(db)
 
 
-# ================= ЮЗЕРНЕЙМ =================
-
 def generate_username(length=5):
-    chars = string.ascii_lowercase
-    return ''.join(random.choice(chars) for _ in range(length))
+    return ''.join(random.choice(string.ascii_lowercase) for _ in range(length))
 
 
-async def check_username_availability(username):
+async def check_username(bot, username):
     try:
-        await application.bot.get_chat(f"@{username}")
+        await bot.get_chat(f"@{username}")
         return False
     except:
         return True
 
 
-# ================= КНОПКИ =================
-
-def main_menu():
+def menu():
     keyboard = [
-        [InlineKeyboardButton("🎲 Сгенерировать юзернеймы", callback_data="generate")],
+        [InlineKeyboardButton("🎲 Сгенерировать", callback_data="gen")],
         [InlineKeyboardButton("💎 Купить подписку", callback_data="buy")],
         [InlineKeyboardButton("📅 Статус подписки", callback_data="status")]
     ]
-
     return InlineKeyboardMarkup(keyboard)
 
 
-# ================= КОМАНДЫ =================
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    text = (
-        "🤖 Бот для поиска свободных 5-буквенных юзернеймов\n\n"
-        "Выберите действие:"
+    await update.message.reply_text(
+        "🤖 Бот генерации 5-буквенных юзернеймов",
+        reply_markup=menu()
     )
 
-    if update.message:
-        await update.message.reply_text(text, reply_markup=main_menu())
-    else:
-        await update.callback_query.message.edit_text(text, reply_markup=main_menu())
-
-
-# ================= КНОПКИ ОБРАБОТКА =================
 
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -100,9 +85,10 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == "buy":
 
-        text = "Напишите @wvmmy для покупки подписки на месяц, цена 50 руб."
-
-        await query.message.edit_text(text, reply_markup=main_menu())
+        await query.message.edit_text(
+            "Напишите @wvmmy для покупки подписки на месяц, цена 50 руб.",
+            reply_markup=menu()
+        )
 
     elif query.data == "status":
 
@@ -111,53 +97,46 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             expire = db[str(user_id)]
             days = int((expire - time.time()) / 86400)
 
-            text = f"💎 У вас есть подписка\nОсталось дней: {days}"
+            text = f"💎 Подписка активна\nОсталось дней: {days}"
 
         else:
 
-            text = "❌ У вас нет активной подписки"
+            text = "❌ Подписки нет"
 
-        await query.message.edit_text(text, reply_markup=main_menu())
+        await query.message.edit_text(text, reply_markup=menu())
 
-    elif query.data == "generate":
+    elif query.data == "gen":
 
         if not has_subscription(user_id):
 
             await query.message.edit_text(
                 "❌ Генерация доступна только по подписке",
-                reply_markup=main_menu()
+                reply_markup=menu()
             )
             return
 
-        available = []
+        found = []
         attempts = 0
 
-        while len(available) < 5 and attempts < 500:
+        while len(found) < 5 and attempts < 500:
 
             username = generate_username()
 
-            if await check_username_availability(username):
-                if username not in available:
-                    available.append(username)
+            if await check_username(context.bot, username):
+                if username not in found:
+                    found.append(username)
 
             attempts += 1
 
-        if available:
+        text = "Свободные юзернеймы:\n\n"
 
-            text = "🎯 Свободные юзернеймы:\n\n"
+        for u in found:
+            text += f"@{u}\n"
 
-            for u in available:
-                text += f"@{u}\n"
-
-        else:
-            text = "Не удалось найти свободные."
-
-        await query.message.edit_text(text, reply_markup=main_menu())
+        await query.message.edit_text(text, reply_markup=menu())
 
 
-# ================= АДМИН =================
-
-async def give_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def givesub(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if update.effective_user.id != ADMIN_ID:
         return
@@ -169,23 +148,25 @@ async def give_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         add_subscription(user_id, days)
 
-        await update.message.reply_text("✅ Подписка выдана")
+        await update.message.reply_text("Подписка выдана")
 
     except:
 
-        await update.message.reply_text(
-            "Использование:\n/givesub USER_ID DAYS"
-        )
+        await update.message.reply_text("/givesub USER_ID DAYS")
 
 
-# ================= ЗАПУСК =================
+def main():
 
-application = Application.builder().token(BOT_TOKEN).build()
+    application = Application.builder().token(BOT_TOKEN).build()
 
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("givesub", give_sub))
-application.add_handler(CallbackQueryHandler(buttons))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("givesub", givesub))
+    application.add_handler(CallbackQueryHandler(buttons))
 
-print("Бот запущен")
+    print("Bot started")
 
-application.run_polling()
+    application.run_polling()
+
+
+if __name__ == "__main__":
+    main()
