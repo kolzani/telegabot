@@ -15,8 +15,8 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")  # токен берём из переменной среды
-ADMIN_ID = 123456789                 # замени на свой ID
+BOT_TOKEN = os.getenv("8717987578:AAF1i8ycyaOrSlFlDS727OUcfqXLcAv7v9k")  # токен берём из переменной среды
+ADMIN_ID = 6228421196                 # замени на свой ID
 DB_FILE = "subscriptions.json"
 
 # ================= БАЗА =================
@@ -128,3 +128,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
