@@ -15,7 +15,7 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-BOT_TOKEN = os.getenv("8525866998:AAEYebntrTi01nBgeoFkSRq6oHLcW-lGPw4")  # Токен из переменных окружения
+BOT_TOKEN = os.getenv("8717987578:AAF1i8ycyaOrSlFlDS727OUcfqXLcAv7v9k")  # Токен из переменных окружения
 ADMIN_ID = 6228421196  # Заменить на свой Telegram ID
 DB_FILE = "subscriptions.json"
 
@@ -154,3 +154,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
