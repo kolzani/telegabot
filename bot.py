@@ -118,7 +118,7 @@ async def admin_panel(msg: types.Message):
 
 # Статистика (для админа)
 @dp.message_handler(lambda message: message.text == ("📊 Статистика")
-async def stats(msg: types.Message):
+async def stats(msg):
     if msg.from_user.id != ADMIN_ID:
         await msg.answer("❌ Вы не администратор.")
         return
@@ -167,4 +167,5 @@ async def back_to_menu(msg: types.Message):
 
     if msg.from_user.id == ADMIN_ID:
         keyboard.add(KeyboardButton("📊 Статистика")
+
 
