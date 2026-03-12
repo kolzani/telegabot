@@ -118,7 +118,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == "buy":
         await query.message.edit_text(
-            "💎 Купить подписку можно у @wvmmy.\n1 покупка — 100₽\n2 покупка — 75₽\n3+ — 50₽/мес.",
+            "💎 Купить подписку можно у @wvmmy.\n1 покупка — 100₽\n2 покупка — 75₽\n3+ — 50₽/мес.А также для получения бесплатной подписки напишите этому же юзеру",
             reply_markup=menu(user_id)
         )
     elif query.data == "status":
@@ -189,4 +189,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
