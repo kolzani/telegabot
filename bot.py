@@ -13,8 +13,7 @@ from telegram.error import RetryAfter, TimedOut, NetworkError
 logging.basicConfig(level=logging.INFO)
 
 # ================== TOKEN ==================
-BOT_TOKEN = os.environ.get("BOT_TOKEN") # обязательно сменить токен
-
+BOT_TOKEN = os.environ.get("BOT_TOKEN")  # обязательно вписать токен
 ADMIN_ID = 6228421196
 DB_FILE = "subscriptions.json"
 
@@ -62,35 +61,28 @@ def remove_subscription(user_id):
 
 # ================= USERNAME =================
 def generate_username(length=5):
-    """
-    Генерирует username.
-    length: 5 или 6 (по умолчанию 5)
-    Красивые юзеры появляются редко.
-    """
     letters = string.ascii_lowercase
     rare = "qxzjkv"
 
-    # случайное число для выбора шаблона
-    mode = random.randint(1, 50)  # 1–50
-
-    if mode <= 35:
-        # 70% — обычная случайная комбинация
-        return ''.join(random.choice(letters) for _ in range(length))
-    elif mode <= 45:
-        # 20% — паттерн ababa (для 5 букв) или ababab (для 6)
-        a = random.choice(letters)
-        b = random.choice(letters)
-        if length == 5:
+    if length == 5:
+        mode = random.randint(1, 10)
+        if mode <= 6:
+            return ''.join(random.choice(letters) for _ in range(5))
+        elif mode <= 8:
+            a = random.choice(letters)
+            b = random.choice(letters)
             return a + b + a + b + a
+        elif mode == 9:
+            c = random.choice(letters)
+            return c * 5
         else:
-            return a + b + a + b + a + b
-    elif mode <= 47:
-        # 4% — полностью одинаковые буквы
-        c = random.choice(letters)
-        return c * length
-    else:
-        # 6% — редкие буквы
-        return ''.join(random.choice(rare) for _ in range(length))
+            return ''.join(random.choice(rare) for _ in range(5))
+    elif length == 6:
+        mode = random.randint(1, 10)
+        if mode <= 8:  # реже красивые
+            return ''.join(random.choice(letters) for _ in range(6))
+        else:
+            return ''.join(random.choice(rare + letters) for _ in range(6))
 
 async def check_username(bot, username):
     global checked_usernames_count
@@ -117,15 +109,33 @@ async def check_batch(bot, usernames):
     free = [usernames[i] for i, res in enumerate(results) if res]
     return free
 
-async def find_usernames(bot, amount=10, length=5):
+async def find_usernames(bot, amount=10, length=5, progress_message=None):
     found = []
+    checked_total = 0
+    batch_size = 50
+
     while len(found) < amount:
-        batch = [generate_username(length) for _ in range(50)]
-        free = await check_batch(bot, batch)
-        for u in free:
-            if u not in found:
-                found.append(u)
-        await asyncio.sleep(random.uniform(0.1, 0.3))
+        batch = [generate_username(length=length) for _ in range(batch_size)]
+        results = await check_batch(bot, batch)
+        checked_total += batch_size
+
+        for i, free in enumerate(results):
+            if free and batch[i] not in found:
+                found.append(batch[i])
+                if len(found) >= amount:
+                    break
+
+        # Обновляем сообщение с прогрессом
+        if progress_message:
+            try:
+                await bot.edit_message_text(
+                    chat_id=progress_message.chat_id,
+                    message_id=progress_message.message_id,
+                    text=f"🔍 Проверено {checked_total} username…\nНайдено: {len(found)}"
+                )
+            except:
+                pass
+
     return found[:amount]
 
 # ================= СТАТИСТИКА =================
@@ -139,7 +149,7 @@ def get_stats():
 def menu(user_id):
     keyboard = [
         [InlineKeyboardButton("🎲 Сгенерировать 5-буквенные", callback_data="gen5")],
-        [InlineKeyboardButton("✨ Сгенерировать красивые 6-буквенные", callback_data="gen6")],
+        [InlineKeyboardButton("✨ Сгенерировать 6-буквенные красивые", callback_data="gen6")],
         [InlineKeyboardButton("💎 Купить подписку", callback_data="buy")],
         [InlineKeyboardButton("📅 Статус подписки", callback_data="status")]
     ]
@@ -154,8 +164,8 @@ def admin_menu():
             InlineKeyboardButton("📊 Статистика", callback_data="stats")
         ],
         [
-            InlineKeyboardButton("💎 Подписки", callback_data="subs"),
-            InlineKeyboardButton("🔄 Выдать/Снять подписку", callback_data="subadmin")
+            InlineKeyboardButton("💎 Выдать подписку", callback_data="addsub"),
+            InlineKeyboardButton("❌ Убрать подписку", callback_data="removesub")
         ],
         [
             InlineKeyboardButton("⬅ Назад", callback_data="back")
@@ -180,51 +190,42 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     user_id = query.from_user.id
 
-    try:
-        if query.data == "buy":
-            await query.message.edit_text(
-                "Напишите @wvmmy для покупки\nЦена: 100 после 75 а уже после 3 покупки 50 руб / месяц",
-                reply_markup=menu(user_id)
-            )
-        elif query.data == "status":
-            expire = db.get(str(user_id), 0)
-            if expire > time.time():
-                seconds_left = expire - time.time()
-                days = int(seconds_left // 86400)
-                hours = int((seconds_left % 86400) // 3600)
-                text = f"💎 Подписка активна\nОсталось: {days} д. {hours} ч."
-            else:
-                text = "❌ Подписки нет"
-            await query.message.edit_text(text, reply_markup=menu(user_id))
-        elif query.data == "gen5":
-            if not has_subscription(user_id):
-                await query.message.edit_text(
-                    "❌ Генерация доступна только по подписке",
-                    reply_markup=menu(user_id)
-                )
-                return
-            await query.message.edit_text("🔍 Ищу свободные 5-буквенные username...")
-            usernames = await find_usernames(context.bot, 10, length=5)
-            text = "🎯 Свободные username:\n\n" + "\n".join(f"@{u}" for u in usernames) if usernames else "❌ Не удалось найти"
-            await query.message.edit_text(text, reply_markup=menu(user_id))
-        elif query.data == "gen6":
-            if not has_subscription(user_id):
-                await query.message.edit_text(
-                    "❌ Генерация доступна только по подписке",
-                    reply_markup=menu(user_id)
-                )
-                return
-            await query.message.edit_text("🔍 Ищу свободные красивые 6-буквенные username...")
-            usernames = await find_usernames(context.bot, 5, length=6)  # меньше, чтобы не зависал
-            text = "✨ Свободные 6-буквенные username:\n\n" + "\n".join(f"@{u}" for u in usernames) if usernames else "❌ Не удалось найти"
-            await query.message.edit_text(text, reply_markup=menu(user_id))
-        elif query.data == "admin" and user_id == ADMIN_ID:
-            await query.message.edit_text("⚙️ Админ панель", reply_markup=admin_menu())
-        elif query.data == "users" and user_id == ADMIN_ID:
-            await query.message.edit_text(f"👥 Пользователей: {len(db)}", reply_markup=admin_menu())
-        elif query.data == "stats" and user_id == ADMIN_ID:
-            total, active, expired = get_stats()
-            text = f"""
+    # =========== ПОКУПКА / СТАТУС ===========
+    if query.data == "buy":
+        await query.message.edit_text(
+            "Напишите @wvmmy для покупки\nЦена: 100 после 75, а уже после 3 покупки 50 руб / месяц",
+            reply_markup=menu(user_id)
+        )
+    elif query.data == "status":
+        expire = db.get(str(user_id), 0)
+        if expire > time.time():
+            seconds_left = expire - time.time()
+            days = int(seconds_left // 86400)
+            hours = int((seconds_left % 86400) // 3600)
+            text = f"💎 Подписка активна\nОсталось: {days} д. {hours} ч."
+        else:
+            text = "❌ Подписки нет"
+        await query.message.edit_text(text, reply_markup=menu(user_id))
+
+    # =========== ГЕНЕРАЦИЯ ===========
+    elif query.data in ["gen5", "gen6"]:
+        if not has_subscription(user_id):
+            await query.message.edit_text("❌ Генерация доступна только по подписке", reply_markup=menu(user_id))
+            return
+        length = 5 if query.data == "gen5" else 6
+        progress_message = await query.message.edit_text(f"🔍 Ищу свободные {'5-буквенные' if length==5 else '6-буквенные'} username…")
+        usernames = await find_usernames(context.bot, 10, length=length, progress_message=progress_message)
+        text = "🎯 Свободные username:\n\n" + "\n".join(f"@{u}" for u in usernames) if usernames else "❌ Не удалось найти"
+        await query.message.edit_text(text, reply_markup=menu(user_id))
+
+    # =========== АДМИН ===========
+    elif query.data == "admin" and user_id == ADMIN_ID:
+        await query.message.edit_text("⚙️ Админ панель", reply_markup=admin_menu())
+    elif query.data == "users" and user_id == ADMIN_ID:
+        await query.message.edit_text(f"👥 Пользователей: {len(db)}", reply_markup=admin_menu())
+    elif query.data == "stats" and user_id == ADMIN_ID:
+        total, active, expired = get_stats()
+        text = f"""
 📊 СТАТИСТИКА БОТА
 
 👥 Пользователей: {total}
@@ -234,17 +235,14 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 🕒 {time.strftime("%H:%M:%S")}
 """
-            await query.message.edit_text(text, reply_markup=admin_menu())
-        elif query.data == "subs" and user_id == ADMIN_ID:
-            active = sum(1 for u in db if db[u] > time.time())
-            await query.message.edit_text(f"💎 Активных подписок: {active}", reply_markup=admin_menu())
-        elif query.data == "subadmin" and user_id == ADMIN_ID:
-            text = "Используйте команды:\n/givesub USER_ID DAYS\n/removesub USER_ID"
-            await query.message.edit_text(text, reply_markup=admin_menu())
-        elif query.data == "back":
-            await query.message.edit_text("Главное меню", reply_markup=menu(user_id))
-    except Exception as e:
-        print("Ошибка при обработке кнопки:", e)
+        await query.message.edit_text(text, reply_markup=admin_menu())
+
+    elif query.data == "addsub" and user_id == ADMIN_ID:
+        await query.message.edit_text("Используйте команду /givesub USER_ID DAYS")
+    elif query.data == "removesub" and user_id == ADMIN_ID:
+        await query.message.edit_text("Используйте команду /removesub USER_ID")
+    elif query.data == "back":
+        await query.message.edit_text("Главное меню", reply_markup=menu(user_id))
 
 # ================= АДМИН КОМАНДЫ =================
 async def givesub(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -276,12 +274,7 @@ def main():
     app.add_handler(CommandHandler("removesub", removesub))
     app.add_handler(CallbackQueryHandler(buttons))
     print("Бот запущен")
-    while True:
-        try:
-            app.run_polling()
-        except Exception as e:
-            print("Ошибка:", e)
-            time.sleep(10)
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
