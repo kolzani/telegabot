@@ -34,8 +34,8 @@ admin_menu.add(KeyboardButton("❌ Убрать подписку"))
 admin_menu.add(KeyboardButton("🚫 Завершить админ панель"))
 
 # Генерация 5-значных username без цифр
-def generate_username():
-    return ''.join(random.choice(string.ascii_lowercase) for _ in range(5))
+def generate_usernames(count=5):
+    return [''.join(random.choice(string.ascii_lowercase) for _ in range(5)) for _ in range(count)]
 
 # Инициализация базы данных
 async def init_db():
@@ -102,8 +102,8 @@ async def find_username(msg: types.Message):
     if not await check_subscription(msg.from_user.id):
         await msg.answer("❌ У вас нет подписки. Пожалуйста, купите подписку, чтобы искать username.")
         return
-    username = generate_username()
-    await msg.answer(f"Ваш сгенерированный username: @{username}")
+    usernames = generate_usernames()
+    await msg.answer(f"Вот 5 доступных username:\n@{', @'.join(usernames)}")
 
 # Обработчик кнопки "Купить подписку"
 @dp.message_handler(lambda message: message.text == "💎 Купить подписку")
@@ -144,7 +144,7 @@ async def give_subscription(msg: types.Message):
         return
 
     # Попросим администратора ввести ID пользователя для подписки
-    await msg.answer("Пожалуйста, введите ID пользователя, которому нужно выдать подписку.", reply_markup=generate_id_button())
+    await msg.answer("Пожалуйста, введите ID пользователя и на сколько месяцев нужно выдать подписку (например: /id <user_id> 3)", reply_markup=generate_id_button())
 
 # Удаление подписки
 @dp.message_handler(lambda message: message.text == "❌ Убрать подписку")
@@ -156,14 +156,7 @@ async def remove_subscription(msg: types.Message):
     # Попросим администратора ввести ID пользователя для удаления подписки
     await msg.answer("Пожалуйста, введите ID пользователя, у которого нужно удалить подписку.", reply_markup=generate_id_button())
 
-# Обработка callback'ов от inline кнопок
-@dp.callback_query_handler(lambda c: c.data == "enter_id")
-async def enter_id_handler(callback_query: types.CallbackQuery):
-    await bot.answer_callback_query(callback_query.id)
-    # Просим администратора ввести ID пользователя
-    await bot.send_message(callback_query.from_user.id, "Введите ID пользователя в формате: /id <user_id>")
-
-# Обработчик команды ввода ID пользователя для выдачи подписки
+# Обработка команды ввода ID пользователя для выдачи подписки
 @dp.message_handler(lambda message: message.text.startswith("/id"))
 async def input_id_for_subscription(msg: types.Message):
     if msg.from_user.id != ADMIN_ID:
@@ -172,14 +165,14 @@ async def input_id_for_subscription(msg: types.Message):
 
     # Получаем ID из сообщения
     try:
-        user_id = int(msg.text.split()[1])  # получаем ID пользователя из команды
+        user_id, months = int(msg.text.split()[1]), int(msg.text.split()[2])  # получаем ID пользователя и количество месяцев
     except (IndexError, ValueError):
-        await msg.answer("❌ Неверный формат ID. Используйте команду в формате: /id <user_id>")
+        await msg.answer("❌ Неверный формат. Используйте команду в формате: /id <user_id> <months>")
         return
 
     # Выдаем подписку пользователю
-    await add_subscription(user_id)
-    await msg.answer(f"✅ Подписка успешно выдана пользователю {user_id}.")
+    await add_subscription(user_id, months)
+    await msg.answer(f"✅ Подписка успешно выдана пользователю {user_id} на {months} месяц(ев).")
 
 # Обработчик команды ввода ID пользователя для удаления подписки
 @dp.message_handler(lambda message: message.text.startswith("/remove_id"))
