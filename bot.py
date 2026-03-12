@@ -37,19 +37,16 @@ admin_menu.add(KeyboardButton("🚫 Завершить админ панель")
 def generate_usernames(count=5):
     return [''.join(random.choice(string.ascii_lowercase) for _ in range(5)) for _ in range(count)]
 
-# Инициализация базы данных
-async def init_db():
-    async with aiosqlite.connect("database.db") as db:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS users(
-                id INTEGER PRIMARY KEY,
-                sub_until TEXT,
-                username TEXT,
-                is_admin INTEGER DEFAULT 0
-            )
-        """)
-        await db.commit()
-    logger.info("Database initialized")
+# Проверка доступности username
+async def is_username_available(username):
+    try:
+        # Попробуем получить информацию о пользователе по username
+        user = await bot.get_chat(username)
+        # Если чат существует, значит username занят
+        return False
+    except:
+        # Ошибка значит, что username свободен
+        return True
 
 # Проверка подписки
 async def check_subscription(user_id):
@@ -102,8 +99,21 @@ async def find_username(msg: types.Message):
     if not await check_subscription(msg.from_user.id):
         await msg.answer("❌ У вас нет подписки. Пожалуйста, купите подписку, чтобы искать username.")
         return
-    usernames = generate_usernames()
-    await msg.answer(f"Вот 5 доступных username:\n@{', @'.join(usernames)}")
+
+    usernames = []
+    attempts = 0
+
+    while len(usernames) < 5 and attempts < 100:  # Попробуем 100 раз сгенерировать уникальные юзернеймы
+        username = generate_usernames(count=1)[0]  # генерируем один username
+        available = await is_username_available(f"@{username}")
+        if available:
+            usernames.append(username)
+        attempts += 1
+
+    if len(usernames) > 0:
+        await msg.answer(f"Вот 5 доступных username:\n@{', @'.join(usernames)}")
+    else:
+        await msg.answer("❌ Не удалось найти свободные username после 100 попыток. Попробуйте позже.")
 
 # Обработчик кнопки "Купить подписку"
 @dp.message_handler(lambda message: message.text == "💎 Купить подписку")
