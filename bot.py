@@ -4,6 +4,7 @@ import json
 import time
 import logging
 import os
+import asyncio
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
@@ -14,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 # Вариант 1: через переменную окружения (рекомендовано)
 BOT_TOKEN = "8525866998:AAEYebntrTi01nBgeoFkSRq6oHLcW-lGPw4"
 
-# Вариант 2: напрямую в коде (небезопасно)
+# Вариант 2: напрямую в коде (для теста)
 # BOT_TOKEN = "8525866998:AAEYebntrTi01nBgeoFkSRq6oHLcW-lGPw4"
 
 if not BOT_TOKEN:
@@ -55,20 +56,28 @@ def generate_username():
 async def check_username(bot, username):
     try:
         await bot.get_chat(f"@{username}")
+        # Если get_chat не выбросил исключение — юзернейм занят
         return False
     except:
+        # Если возникло исключение — юзернейм свободен
         return True
 
 async def find_usernames(bot, amount=5):
     found = []
     checked = set()
-    while len(found) < amount and len(checked) < 5000:
+
+    while len(found) < amount and len(checked) < 10000:
         username = generate_username()
         if username in checked:
             continue
         checked.add(username)
+
         if await check_username(bot, username):
             found.append(username)
+
+        # Небольшая пауза, чтобы Telegram не блокировал запросы
+        await asyncio.sleep(0.05)
+
     return found
 
 # ================= МЕНЮ =================
@@ -180,5 +189,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
