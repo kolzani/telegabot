@@ -1,270 +1,330 @@
+import asyncio
 import random
 import string
-import json
-import time
-import logging
-import os
-import asyncio
+import aiohttp
+import aiosqlite
+import datetime
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
-from telegram.error import RetryAfter, TimedOut, NetworkError
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import ReplyKeyboardMarkup
+from aiogram.utils import executor
 
-logging.basicConfig(level=logging.INFO)
-
-# ================== TOKEN ==================
-BOT_TOKEN = os.environ.get("BOT_TOKEN")  # обязательно сменить токен
+TOKEN = "8525866998:AAEYebntrTi01nBgeoFkSRq6oHLcW-lGPw4"
 ADMIN_ID = 6228421196
-DB_FILE = "subscriptions.json"
 
-# ================= АНТИ-БАН =================
-semaphore = asyncio.Semaphore(1)  # проверка username строго последовательно
+bot = Bot(token=TOKEN)
+dp = Dispatcher(bot)
 
-# ================= ЛОГ ПРОВЕРОК =================
-checked_usernames_count = 0
+letters = string.ascii_lowercase
+WORKERS = 5
 
-# ================= БАЗА =================
-def load_db():
-    if not os.path.exists(DB_FILE):
-        return {}
-    try:
-        with open(DB_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return {}
+menu = ReplyKeyboardMarkup(resize_keyboard=True)
+menu.add("🔎 Найти username")
+menu.add("🔤 Фильтр")
+menu.add("📊 Подписка")
+menu.add("💎 Купить")
 
-def save_db():
-    with open(DB_FILE, "w") as f:
-        json.dump(db, f)
 
-db = load_db()
+def generate_username(filter_letters=None):
+    chars = filter_letters if filter_letters else letters
+    return ''.join(random.choice(chars) for _ in range(5))
 
-# ================= ПОДПИСКА =================
-def has_subscription(user_id):
-    uid = str(user_id)
-    expire = db.get(uid, 0)
-    return expire > int(time.time())
 
-def add_subscription(user_id, days):
-    uid = str(user_id)
-    now = int(time.time())
-    current = db.get(uid, 0)
-    if current > now:
-        db[uid] = current + days * 86400
-    else:
-        db[uid] = now + days * 86400
-    save_db()
+async def init_db():
 
-def remove_subscription(user_id):
-    db[str(user_id)] = 0
-    save_db()
+    async with aiosqlite.connect("database.db") as db:
 
-# ================= USERNAME =================
-def generate_username():
-    letters = string.ascii_lowercase
-    mode = random.randint(1, 10)
-    if mode <= 6:
-        return ''.join(random.choice(letters) for _ in range(5))
-    elif mode <= 8:
-        a, b = random.choice(letters), random.choice(letters)
-        return a + b + a + b + a
-    elif mode == 9:
-        c = random.choice(letters)
-        return c * 5
-    else:
-        rare = "qxzjkv"
-        return ''.join(random.choice(rare) for _ in range(5))
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS users(
+        id INTEGER PRIMARY KEY,
+        sub_until TEXT,
+        filter TEXT
+        )
+        """)
 
-async def check_username(bot, username):
-    """Проверка юзернейма с задержкой и последовательной обработкой."""
-    global checked_usernames_count
-    async with semaphore:
-        await asyncio.sleep(1)  # пауза между запросами
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS usernames(
+        username TEXT UNIQUE
+        )
+        """)
+
+        await db.commit()
+
+
+async def username_used(username):
+
+    async with aiosqlite.connect("database.db") as db:
+
+        async with db.execute(
+            "SELECT username FROM usernames WHERE username=?",
+            (username,)
+        ) as cur:
+
+            return await cur.fetchone()
+
+
+async def save_username(username):
+
+    async with aiosqlite.connect("database.db") as db:
+
         try:
-            await bot.get_chat(f"@{username}")
-            checked_usernames_count += 1
-            return False
-        except RetryAfter as e:
-            await asyncio.sleep(e.retry_after)
-            return await check_username(bot, username)
-        except (TimedOut, NetworkError):
-            await asyncio.sleep(1)
-            return await check_username(bot, username)
+            await db.execute(
+                "INSERT INTO usernames VALUES(?)",
+                (username,)
+            )
+            await db.commit()
         except:
-            checked_usernames_count += 1
-            return True
+            pass
 
-async def find_usernames(bot, amount=10):
-    """Находит несколько свободных юзернеймов."""
-    found = []
-    tried = set()
-    while len(found) < amount:
-        username = generate_username()
-        if username in tried:
-            continue
-        tried.add(username)
-        is_free = await check_username(bot, username)
-        if is_free:
-            found.append(username)
-    return found
+    with open("found_usernames.txt", "a") as f:
+        f.write(username + "\n")
 
-# ================= СТАТИСТИКА =================
-def get_stats():
-    total = len(db)
-    active = sum(1 for u in db if db[u] > time.time())
-    expired = total - active
-    return total, active, expired
 
-# ================= МЕНЮ =================
-def menu(user_id):
-    keyboard = [
-        [InlineKeyboardButton("🎲 Сгенерировать", callback_data="gen")],
-        [InlineKeyboardButton("💎 Купить подписку", callback_data="buy")],
-        [InlineKeyboardButton("📅 Статус подписки", callback_data="status")]
-    ]
-    if user_id == ADMIN_ID:
-        keyboard.append([InlineKeyboardButton("⚙️ Админ панель", callback_data="admin")])
-    return InlineKeyboardMarkup(keyboard)
+async def check_username(session, username):
 
-def admin_menu():
-    keyboard = [
-        [
-            InlineKeyboardButton("👥 Пользователи", callback_data="users"),
-            InlineKeyboardButton("📊 Статистика", callback_data="stats")
-        ],
-        [
-            InlineKeyboardButton("💎 Выдать подписку", callback_data="give"),
-            InlineKeyboardButton("❌ Убрать подписку", callback_data="remove")
-        ],
-        [
-            InlineKeyboardButton("⬅ Назад", callback_data="back")
-        ]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+    url = f"https://t.me/{username}"
 
-def subscription_user_menu(user_list, action):
-    """Создаёт кнопки для выдачи/удаления подписки"""
-    keyboard = []
-    for uid in user_list:
-        keyboard.append([InlineKeyboardButton(str(uid), callback_data=f"{action}:{uid}")])
-    keyboard.append([InlineKeyboardButton("⬅ Назад", callback_data="admin")])
-    return InlineKeyboardMarkup(keyboard)
+    try:
 
-# ================= START =================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if str(user_id) not in db:
-        db[str(user_id)] = 0
-        save_db()
-    await update.message.reply_text(
-        "🤖 Бот генерации 5-буквенных username",
-        reply_markup=menu(user_id)
+        async with session.get(url) as r:
+
+            text = await r.text()
+
+            if "If you have Telegram" in text:
+                return True
+
+    except:
+        pass
+
+    return False
+
+
+async def has_sub(user_id):
+
+    async with aiosqlite.connect("database.db") as db:
+
+        async with db.execute(
+            "SELECT sub_until FROM users WHERE id=?",
+            (user_id,)
+        ) as cur:
+
+            data = await cur.fetchone()
+
+    if not data:
+        return False
+
+    date = datetime.datetime.strptime(data[0], "%Y-%m-%d")
+
+    return datetime.datetime.now() < date
+
+
+async def get_filter(user_id):
+
+    async with aiosqlite.connect("database.db") as db:
+
+        async with db.execute(
+            "SELECT filter FROM users WHERE id=?",
+            (user_id,)
+        ) as cur:
+
+            data = await cur.fetchone()
+
+    if data:
+        return data[0]
+
+    return None
+
+
+async def worker(user_id, filter_letters):
+
+    conn = aiohttp.TCPConnector(limit=50)
+
+    async with aiohttp.ClientSession(connector=conn) as session:
+
+        while True:
+
+            username = generate_username(filter_letters)
+
+            if await username_used(username):
+                continue
+
+            free = await check_username(session, username)
+
+            await asyncio.sleep(0.7)
+
+            if free:
+
+                await save_username(username)
+
+                try:
+
+                    await bot.send_message(
+                        user_id,
+                        f"🔥 Найден свободный username\n@{username}"
+                    )
+
+                except:
+                    pass
+
+                return
+
+
+@dp.message_handler(commands=["start"])
+async def start(msg: types.Message):
+
+    await msg.answer(
+        "🚀 Бот ищет свободные **5‑буквенные username**",
+        parse_mode="Markdown",
+        reply_markup=menu
     )
 
-# ================= КНОПКИ =================
-async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
+
+@dp.message_handler(lambda m: m.text == "🔎 Найти username")
+async def search(msg: types.Message):
+
+    if not await has_sub(msg.from_user.id):
+
+        await msg.answer("❌ Нет активной подписки")
+        return
+
+    filter_letters = await get_filter(msg.from_user.id)
+
+    await msg.answer("🚀 Начинаю поиск...")
+
+    tasks = []
+
+    for _ in range(WORKERS):
+
+        tasks.append(
+            asyncio.create_task(
+                worker(msg.from_user.id, filter_letters)
+            )
+        )
+
+    await asyncio.gather(*tasks)
+
+
+@dp.message_handler(lambda m: m.text == "🔤 Фильтр")
+async def filter_cmd(msg: types.Message):
+
+    await msg.answer(
+        "Введите буквы для генерации\n\nпример:\nabc"
+    )
+
+
+@dp.message_handler(lambda m: m.text.isalpha() and len(m.text) <= 26)
+async def save_filter(msg: types.Message):
+
+    async with aiosqlite.connect("database.db") as db:
+
+        await db.execute(
+            "INSERT OR REPLACE INTO users(id, filter) VALUES (?,?)",
+            (msg.from_user.id, msg.text.lower())
+        )
+
+        await db.commit()
+
+    await msg.answer("✅ Фильтр сохранён")
+
+
+@dp.message_handler(lambda m: m.text == "📊 Подписка")
+async def sub_status(msg: types.Message):
+
+    async with aiosqlite.connect("database.db") as db:
+
+        async with db.execute(
+            "SELECT sub_until FROM users WHERE id=?",
+            (msg.from_user.id,)
+        ) as cur:
+
+            data = await cur.fetchone()
+
+    if not data:
+
+        await msg.answer("❌ Подписки нет")
+        return
+
+    await msg.answer(f"✅ Подписка до {data[0]}")
+
+
+@dp.message_handler(lambda m: m.text == "💎 Купить")
+async def buy(msg: types.Message):
+
+    await msg.answer(
+        "💎 Купить подписку можно у @wvmmy\n\n"
+        "1 покупка — 100 руб\n"
+        "2 покупка — 75 руб\n"
+        "3+ покупка — 50 руб / месяц"
+    )
+
+
+@dp.message_handler(commands=["admin"])
+async def admin(msg: types.Message):
+
+    if msg.from_user.id != ADMIN_ID:
+        return
+
+    await msg.answer(
+        "⚙️ Админ команды:\n\n"
+        "выдать ID ДНЕЙ\n"
+        "стата"
+    )
+
+
+@dp.message_handler(lambda m: m.text.startswith("выдать"))
+async def give_sub(msg: types.Message):
+
+    if msg.from_user.id != ADMIN_ID:
+        return
 
     try:
-        if query.data == "buy":
-            await query.message.edit_text(
-                "Напишите @wvmmy для покупки\nЦена: 100 после 75 а уже после 3 покупки 50 руб / месяц",
-                reply_markup=menu(user_id)
+
+        user_id = int(msg.text.split()[1])
+        days = int(msg.text.split()[2])
+
+        date = datetime.datetime.now() + datetime.timedelta(days=days)
+
+        async with aiosqlite.connect("database.db") as db:
+
+            await db.execute(
+                "INSERT OR REPLACE INTO users(id, sub_until) VALUES (?,?)",
+                (user_id, date.strftime("%Y-%m-%d"))
             )
-        elif query.data == "status":
-            expire = db.get(str(user_id), 0)
-            if expire > time.time():
-                seconds_left = expire - time.time()
-                days = int(seconds_left // 86400)
-                hours = int((seconds_left % 86400) // 3600)
-                text = f"💎 Подписка активна\nОсталось: {days} д. {hours} ч."
-            else:
-                text = "❌ Подписки нет"
-            await query.message.edit_text(text, reply_markup=menu(user_id))
-        elif query.data == "gen":
-            if not has_subscription(user_id):
-                await query.message.edit_text(
-                    "❌ Генерация доступна только по подписке",
-                    reply_markup=menu(user_id)
-                )
-                return
-            await query.message.edit_text("🔍 Ищу свободные username...")
-            usernames = await find_usernames(context.bot, 10)
-            if usernames:
-                text = "🎯 Свободные username:\n\n" + "\n".join(f"@{u}" for u in usernames)
-            else:
-                text = "❌ Не удалось найти"
-            await query.message.edit_text(text, reply_markup=menu(user_id))
-        elif query.data == "admin" and user_id == ADMIN_ID:
-            await query.message.edit_text("⚙️ Админ панель", reply_markup=admin_menu())
-        elif query.data == "users" and user_id == ADMIN_ID:
-            users_list = list(db.keys())
-            await query.message.edit_text(f"👥 Пользователей: {len(users_list)}", reply_markup=admin_menu())
-        elif query.data == "stats" and user_id == ADMIN_ID:
-            total, active, expired = get_stats()
-            text = f"""
-📊 СТАТИСТИКА БОТА
 
-👥 Пользователей: {total}
-💎 Активных подписок: {active}
-❌ Без подписки: {expired}
-🔍 Проверено username: {checked_usernames_count}
+            await db.commit()
 
-🕒 {time.strftime("%H:%M:%S")}
-"""
-            await query.message.edit_text(text, reply_markup=admin_menu())
-        elif query.data == "give" and user_id == ADMIN_ID:
-            users_list = list(db.keys())
-            await query.message.edit_text("Выберите пользователя для выдачи подписки:", reply_markup=subscription_user_menu(users_list, "give"))
-        elif query.data.startswith("give:") and user_id == ADMIN_ID:
-            uid = query.data.split(":")[1]
-            add_subscription(uid, 30)  # 30 дней подписки по умолчанию
-            await query.message.edit_text(f"✅ Подписка выдана пользователю {uid}", reply_markup=admin_menu())
-        elif query.data == "remove" and user_id == ADMIN_ID:
-            users_list = list(db.keys())
-            await query.message.edit_text("Выберите пользователя для снятия подписки:", reply_markup=subscription_user_menu(users_list, "remove"))
-        elif query.data.startswith("remove:") and user_id == ADMIN_ID:
-            uid = query.data.split(":")[1]
-            remove_subscription(uid)
-            await query.message.edit_text(f"❌ Подписка удалена у пользователя {uid}", reply_markup=admin_menu())
-        elif query.data == "back":
-            await query.message.edit_text("Главное меню", reply_markup=menu(user_id))
-    except Exception as e:
-        logging.error("Ошибка в кнопках: %s", e)
+        await msg.answer("✅ Подписка выдана")
 
-# ================= АДМИН КОМАНДЫ =================
-async def givesub(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+    except:
+
+        await msg.answer("Формат:\nвыдать ID ДНЕЙ")
+
+
+@dp.message_handler(lambda m: m.text == "стата")
+async def stats(msg: types.Message):
+
+    if msg.from_user.id != ADMIN_ID:
         return
-    if len(context.args) != 2:
-        await update.message.reply_text("/givesub USER_ID DAYS")
-        return
-    user = int(context.args[0])
-    days = int(context.args[1])
-    add_subscription(user, days)
-    await update.message.reply_text("✅ Подписка выдана")
 
-async def removesub(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    if len(context.args) != 1:
-        await update.message.reply_text("/removesub USER_ID")
-        return
-    user = int(context.args[0])
-    remove_subscription(user)
-    await update.message.reply_text("❌ Подписка удалена")
+    async with aiosqlite.connect("database.db") as db:
 
-# ================= ЗАПУСК =================
-def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("givesub", givesub))
-    app.add_handler(CommandHandler("removesub", removesub))
-    app.add_handler(CallbackQueryHandler(buttons))
-    print("Бот запущен")
-    app.run_polling()
+        async with db.execute("SELECT COUNT(*) FROM users") as cur:
+            users = (await cur.fetchone())[0]
+
+        async with db.execute("SELECT COUNT(*) FROM usernames") as cur:
+            names = (await cur.fetchone())[0]
+
+    await msg.answer(
+        f"📊 Статистика\n\n"
+        f"👤 Пользователей: {users}\n"
+        f"🔥 Найдено username: {names}"
+    )
+
 
 if __name__ == "__main__":
-    main()
+
+    loop = asyncio.get_event_loop()
+
+    loop.run_until_complete(init_db())
+
+    executor.start_polling(dp)
