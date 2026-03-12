@@ -4,7 +4,7 @@ import aiosqlite
 import random
 import string
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
 
 # Токен и ID админа
@@ -73,22 +73,28 @@ async def get_subscription_status(user_id):
 @dp.message_handler(commands=["start"])
 async def start(msg: types.Message):
     # Главное меню с кнопками
-    keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add(KeyboardButton("🔎 Найти username"))
-    keyboard.add(KeyboardButton("💎 Купить подписку"))
-    keyboard.add(KeyboardButton("📊 Статус подписки"))
-
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("🔎 Найти username", callback_data="find_usernames"),
+        InlineKeyboardButton("💎 Купить подписку", callback_data="buy_subscription"),
+        InlineKeyboardButton("📊 Статус подписки", callback_data="check_subscription")
+    )
+    
     # Если администратор, добавляем кнопку для статистики
     if msg.from_user.id == ADMIN_ID:
-        keyboard.add(KeyboardButton("📊 Статистика"))
+        keyboard.add(
+            InlineKeyboardButton("📊 Статистика", callback_data="view_stats"),
+            InlineKeyboardButton("🔒 Админ Панель", callback_data="admin_panel")
+        )
 
     await msg.answer("Привет! Я бот для поиска свободных username. Выбери команду из меню.", reply_markup=keyboard)
 
 # Обработчик кнопки "Найти username"
-@dp.message_handler(lambda message: message.text == "🔎 Найти username")
-async def find_username(msg: types.Message):
-    if not await check_subscription(msg.from_user.id):
-        await msg.answer("❌ У вас нет подписки. Пожалуйста, купите подписку, чтобы искать username.")
+@dp.callback_query_handler(lambda c: c.data == "find_usernames")
+async def find_username(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+    if not await check_subscription(user_id):
+        await bot.answer_callback_query(callback_query.id, "❌ У вас нет подписки. Пожалуйста, купите подписку, чтобы искать username.")
         return
 
     usernames = []
@@ -102,28 +108,26 @@ async def find_username(msg: types.Message):
         attempts += 1
 
     if len(usernames) > 0:
-        await msg.answer(f"Вот 5 доступных username:\n@{', @'.join(usernames)}")
+        await bot.answer_callback_query(callback_query.id, f"Вот 5 доступных username:\n@{', @'.join(usernames)}")
     else:
-        await msg.answer("❌ Не удалось найти свободные username после 100 попыток. Попробуйте позже.")
+        await bot.answer_callback_query(callback_query.id, "❌ Не удалось найти свободные username после 100 попыток. Попробуйте позже.")
 
 # Обработчик кнопки "Купить подписку"
-@dp.message_handler(lambda message: message.text == "💎 Купить подписку")
-async def buy_subscription(msg: types.Message):
-    await msg.answer(
-        "💎 Купить подписку можно у @wvmmy.\n1 покупка — 100₽\n2 покупка — 75₽\n3+ — 50₽/мес."
-    )
+@dp.callback_query_handler(lambda c: c.data == "buy_subscription")
+async def buy_subscription(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id, "💎 Купить подписку можно у @wvmmy.\n1 покупка — 100₽\n2 покупка — 75₽\n3+ — 50₽/мес.")
 
 # Статус подписки
-@dp.message_handler(lambda message: message.text == "📊 Статус подписки")
-async def subscription_status(msg: types.Message):
-    status = await get_subscription_status(msg.from_user.id)
-    await msg.answer(status)
+@dp.callback_query_handler(lambda c: c.data == "check_subscription")
+async def subscription_status(callback_query: types.CallbackQuery):
+    status = await get_subscription_status(callback_query.from_user.id)
+    await bot.answer_callback_query(callback_query.id, status)
 
 # Статистика
-@dp.message_handler(lambda message: message.text == "📊 Статистика")
-async def stats(msg: types.Message):
-    if msg.from_user.id != ADMIN_ID:
-        await msg.answer("❌ Вы не администратор.")
+@dp.callback_query_handler(lambda c: c.data == "view_stats")
+async def stats(callback_query: types.CallbackQuery):
+    if callback_query.from_user.id != ADMIN_ID:
+        await bot.answer_callback_query(callback_query.id, "❌ Вы не администратор.")
         return
 
     async with aiosqlite.connect("database.db") as db:
@@ -132,19 +136,35 @@ async def stats(msg: types.Message):
         async with db.execute("SELECT COUNT(*) FROM users WHERE sub_until IS NOT NULL") as cur:
             subscribed_users = (await cur.fetchone())[0]
     
-    await msg.answer(f"Общее количество пользователей: {total_users}\nПользователей с подпиской: {subscribed_users}")
+    await bot.answer_callback_query(callback_query.id, f"Общее количество пользователей: {total_users}\nПользователей с подпиской: {subscribed_users}")
+
+# Админ панель для управления подписками
+@dp.callback_query_handler(lambda c: c.data == "admin_panel")
+async def admin_panel(callback_query: types.CallbackQuery):
+    if callback_query.from_user.id != ADMIN_ID:
+        await bot.answer_callback_query(callback_query.id, "❌ Вы не администратор.")
+        return
+    
+    # Кнопки для админа
+    admin_keyboard = InlineKeyboardMarkup(row_width=2)
+    admin_keyboard.add(
+        InlineKeyboardButton("🔑 Выдать подписку", callback_data="give_subscription"),
+        InlineKeyboardButton("❌ Убрать подписку", callback_data="remove_subscription"),
+        InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_menu")
+    )
+    
+    await bot.answer_callback_query(callback_query.id, "Админ панель: выберите действие", reply_markup=admin_keyboard)
 
 # Выдача подписки
-@dp.message_handler(lambda message: message.text == "🔒 Выдать подписку")
-async def give_subscription(msg: types.Message):
-    if msg.from_user.id != ADMIN_ID:
-        await msg.answer("❌ Вы не администратор.")
+@dp.callback_query_handler(lambda c: c.data == "give_subscription")
+async def give_subscription(callback_query: types.CallbackQuery):
+    if callback_query.from_user.id != ADMIN_ID:
+        await bot.answer_callback_query(callback_query.id, "❌ Вы не администратор.")
         return
 
-    # Попросим администратора ввести ID пользователя для подписки
-    await msg.answer("Пожалуйста, введите ID пользователя и на сколько месяцев нужно выдать подписку (например: /id <user_id> 3)", reply_markup=generate_id_button())
+    await bot.answer_callback_query(callback_query.id, "Введите ID пользователя и срок подписки в месяцах (например: 123456789 3)")
 
-# Обработчик ввода ID для подписки
+# Обработка ввода ID для подписки
 @dp.message_handler(lambda message: message.text.startswith("/id"))
 async def input_id_for_subscription(msg: types.Message):
     if msg.from_user.id != ADMIN_ID:
