@@ -1,105 +1,193 @@
-import logging
 import asyncio
+import datetime
 import aiosqlite
-import time
+import random
+import string
 from aiogram import Bot, Dispatcher, types
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.utils import executor
 
-API_TOKEN = '8648186725:AAG8LqXwmsyEevpBDmi08wf6FCXXAOQq9pU'  # Замените на свой токен
-ADMIN_ID = 6228421196  # Замените на свой ID администратора
-DATABASE_NAME = 'database.db'  # Имя вашей базы данных
+# Токен и ID админа
+TOKEN = '8648186725:AAG8LqXwmsyEevpBDmi08wf6FCXXAOQq9pU'  # Вставь свой токен
+ADMIN_ID = 6228421196  # Вставь свой ID (можно узнать через @userinfobot)
 
-# Настройка логирования
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Создаем экземпляры бота и диспетчера
-bot = Bot(token=API_TOKEN)
+bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
 
 # Инициализация базы данных
 async def init_db():
-    async with aiosqlite.connect(DATABASE_NAME) as db:
-        await db.execute('''
-            CREATE TABLE IF NOT EXISTS subscriptions (
-                user_id INTEGER PRIMARY KEY,
-                subscription_end_date INTEGER
+    async with aiosqlite.connect("database.db") as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY,
+                sub_until TEXT
             )
-        ''')
+        """)
+        await db.commit()
+    print("Database initialized successfully.")
+
+# Генерация случайных 5-значных username
+def generate_usernames(count=5):
+    return [''.join(random.choice(string.ascii_lowercase) for _ in range(5)) for _ in range(count)]
+
+# Проверка доступности username
+async def is_username_available(username):
+    try:
+        # Попробуем получить информацию о пользователе по username
+        await bot.get_chat(username)
+        return False
+    except:
+        return True
+
+# Добавление подписки (сохранение даты окончания подписки)
+async def add_subscription(user_id, months=1):
+    sub_end = datetime.datetime.now() + datetime.timedelta(days=30 * months)
+    async with aiosqlite.connect("database.db") as db:
+        await db.execute("INSERT OR REPLACE INTO users (id, sub_until) VALUES (?, ?)", (user_id, sub_end.strftime("%Y-%m-%d %H:%M:%S")))
         await db.commit()
 
 # Проверка подписки
 async def check_subscription(user_id):
-    async with aiosqlite.connect(DATABASE_NAME) as db:
-        cursor = await db.execute('SELECT subscription_end_date FROM subscriptions WHERE user_id = ?', (user_id,))
-        result = await cursor.fetchone()
-        if result:
-            return result[0]  # Возвращаем дату окончания подписки
-        return None  # Подписка отсутствует
+    async with aiosqlite.connect("database.db") as db:
+        async with db.execute("SELECT sub_until FROM users WHERE id=?", (user_id,)) as cur:
+            data = await cur.fetchone()
+    if not data or not data[0]:
+        return False
+    sub_end = datetime.datetime.strptime(data[0], "%Y-%m-%d %H:%M:%S")  # Используем точный формат
+    return datetime.datetime.now() < sub_end  # Проверка с точным временем
 
-# Обработчик команды "/start"
-@dp.message_handler(commands=['start'])
-async def start_command(message: types.Message):
-    user_id = message.from_user.id
-    subscription_end_date = await check_subscription(user_id)
+# Статус подписки
+async def get_subscription_status(user_id):
+    async with aiosqlite.connect("database.db") as db:
+        async with db.execute("SELECT sub_until FROM users WHERE id=?", (user_id,)) as cur:
+            data = await cur.fetchone()
+    if data:
+        try:
+            sub_end = datetime.datetime.strptime(data[0], "%Y-%m-%d %H:%M:%S")
+            return f"Подписка активна до {sub_end.strftime('%Y-%m-%d %H:%M:%S')}"
+        except ValueError:
+            return "❌ Подписка имеет неверный формат."
+    return "Подписка отсутствует."
 
-    if subscription_end_date:
-        await message.reply(f"Ваша подписка активна до {subscription_end_date}.")
+# Основной обработчик команды /start
+@dp.message_handler(commands=["start"])
+async def start(msg: types.Message):
+    # Главное меню с кнопками
+    keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.add(KeyboardButton("🔎 Найти username"))
+    keyboard.add(KeyboardButton("💎 Купить подписку"))
+    keyboard.add(KeyboardButton("📊 Статус подписки"))
+
+    # Если администратор, добавляем кнопку для статистики
+    if msg.from_user.id == ADMIN_ID:
+        keyboard.add(KeyboardButton("📊 Статистика"))
+        keyboard.add(KeyboardButton("🔒 Админ Панель"))
+
+    await msg.answer("Привет! Я бот для поиска свободных username. Выбери команду из меню.", reply_markup=keyboard)
+
+# Обработчик кнопки "Найти username"
+@dp.message_handler(lambda message: message.text == "🔎 Найти username")
+async def find_username(msg: types.Message):
+    if not await check_subscription(msg.from_user.id):
+        await msg.answer("❌ У вас нет подписки. Пожалуйста, купите подписку, чтобы искать username.")
+        return
+
+    usernames = []
+    attempts = 0
+
+    while len(usernames) < 5 and attempts < 100:
+        username = generate_usernames(count=1)[0]
+        available = await is_username_available(f"@{username}")
+        if available:
+            usernames.append(username)
+        attempts += 1
+
+    if len(usernames) > 0:
+        await msg.answer(f"Вот 5 доступных username:\n@{', @'.join(usernames)}")
     else:
-        await message.reply("У вас нет активной подписки. Купите подписку через админ-панель.")
+        await msg.answer("❌ Не удалось найти свободные username после 100 попыток. Попробуйте позже.")
 
-# Админ-панель
-@dp.message_handler(commands=['admin'])
-async def admin_panel(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        await message.reply("❌ Вы не администратор.")
+# Обработчик кнопки "Купить подписку"
+@dp.message_handler(lambda message: message.text == "💎 Купить подписку")
+async def buy_subscription(msg: types.Message):
+    await msg.answer(
+        "💎 Купить подписку можно у @wvmmy.\n1 покупка — 100₽\n2 покупка — 75₽\n3+ — 50₽/мес."
+    )
+
+# Статус подписки
+@dp.message_handler(lambda message: message.text == "📊 Статус подписки")
+async def subscription_status(msg: types.Message):
+    status = await get_subscription_status(msg.from_user.id)
+    await msg.answer(status)
+
+# Статистика
+@dp.message_handler(lambda message: message.text == "📊 Статистика")
+async def stats(msg: types.Message):
+    if msg.from_user.id != ADMIN_ID:
+        await msg.answer("❌ Вы не администратор.")
         return
 
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add(types.KeyboardButton("Выдать подписку"))
-    markup.add(types.KeyboardButton("Удалить подписку"))
-    await message.reply("Панель администратора", reply_markup=markup)
+    async with aiosqlite.connect("database.db") as db:
+        async with db.execute("SELECT COUNT(*) FROM users") as cur:
+            total_users = (await cur.fetchone())[0]
+        async with db.execute("SELECT COUNT(*) FROM users WHERE sub_until IS NOT NULL") as cur:
+            subscribed_users = (await cur.fetchone())[0]
+    
+    await msg.answer(f"Общее количество пользователей: {total_users}\nПользователей с подпиской: {subscribed_users}")
 
-# Выдать подписку
-@dp.message_handler(lambda message: message.text == "Выдать подписку")
-async def give_subscription(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        await message.reply("❌ Вы не администратор.")
+# Админ панель для управления подписками
+@dp.message_handler(lambda message: message.text == "🔒 Админ Панель")
+async def admin_panel(msg: types.Message):
+    if msg.from_user.id != ADMIN_ID:
+        await msg.answer("❌ Вы не администратор.")
+        return
+    
+    # Кнопки для админа
+    admin_keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
+    admin_keyboard.add(KeyboardButton("🔑 Выдать подписку"))
+    admin_keyboard.add(KeyboardButton("❌ Убрать подписку"))
+    admin_keyboard.add(KeyboardButton("🔙 Назад в меню"))
+    
+    await msg.answer("Админ панель: выберите действие", reply_markup=admin_keyboard)
+
+# Выдача подписки
+@dp.message_handler(lambda message: message.text == "🔑 Выдать подписку")
+async def give_subscription(msg: types.Message):
+    if msg.from_user.id != ADMIN_ID:
+        await msg.answer("❌ Вы не администратор.")
         return
 
-    await message.reply("Введите ID пользователя и количество месяцев подписки, например: 123456789 3")
+    await msg.answer("Введите ID пользователя и срок подписки в месяцах (например: 123456789 3)")
 
-# Удалить подписку
-@dp.message_handler(lambda message: message.text == "Удалить подписку")
-async def remove_subscription(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        await message.reply("❌ Вы не администратор.")
+# Обработка ввода ID для подписки
+@dp.message_handler(lambda message: message.text.startswith("/id"))
+async def input_id_for_subscription(msg: types.Message):
+    if msg.from_user.id != ADMIN_ID:
+        await msg.answer("❌ Вы не администратор.")
         return
 
-    await message.reply("Введите ID пользователя для удаления подписки.")
+    try:
+        user_id, months = int(msg.text.split()[1]), int(msg.text.split()[2])  # получаем ID и месяцы
+    except (IndexError, ValueError):
+        await msg.answer("❌ Неверный формат. Используйте команду в формате: /id <user_id> <months>")
+        return
 
-# Обработчик текста с ID и количеством месяцев подписки
-@dp.message_handler(lambda message: len(message.text.split()) == 2)
-async def handle_subscription(message: types.Message):
-    user_id, months = message.text.split()
-    user_id = int(user_id)
-    months = int(months)
+    await add_subscription(user_id, months)
+    await msg.answer(f"✅ Подписка успешно выдана пользователю {user_id} на {months} месяцев.")
 
-    async with aiosqlite.connect(DATABASE_NAME) as db:
-        subscription_end_date = int(time.time()) + months * 30 * 24 * 60 * 60  # Добавляем количество месяцев к текущей дате
-
-        # Вставка или обновление подписки пользователя
-        await db.execute('''
-            INSERT OR REPLACE INTO subscriptions (user_id, subscription_end_date)
-            VALUES (?, ?)
-        ''', (user_id, subscription_end_date))
-
+# Инициализация базы данных
+async def init_db():
+    async with aiosqlite.connect("database.db") as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY,
+                sub_until TEXT
+            )
+        """)
         await db.commit()
+    print("Database initialized successfully.")
 
-    await message.reply(f"Подписка на {months} месяц(ев) выдана пользователю {user_id}.")
-
-# Запуск бота
-if __name__ == '__main__':
-    # Используем asyncio.run() для корректного запуска бота
-    asyncio.run(init_db())  # Инициализация базы данных
-    executor.start_polling(dp, skip_updates=True)  # Запуск бота
+if __name__ == "__main__":
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(init_db())  # Инициализация базы данных перед запуском бота
+    executor.start_polling(dp, skip_updates=True)
