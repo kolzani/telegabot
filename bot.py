@@ -51,9 +51,9 @@ async def check_subscription(user_id):
     async with aiosqlite.connect("database.db") as db:
         async with db.execute("SELECT sub_until FROM users WHERE id=?", (user_id,)) as cur:
             data = await cur.fetchone()
-    if not data or not data[0]:
+    if not data or not data:
         return False
-    sub_end = datetime.datetime.strptime(data[0], "%Y-%m-%d %H:%M:%S")  # Используем точный формат
+    sub_end = datetime.datetime.strptime(data, "%Y-%m-%d %H:%M:%S")  # Используем точный формат
     return datetime.datetime.now() < sub_end  # Проверка с точным временем
 
 # Статус подписки
@@ -63,7 +63,7 @@ async def get_subscription_status(user_id):
             data = await cur.fetchone()
     if data:
         try:
-            sub_end = datetime.datetime.strptime(data[0], "%Y-%m-%d %H:%M:%S")
+            sub_end = datetime.datetime.strptime(data, "%Y-%m-%d %H:%M:%S")
             return f"Подписка активна до {sub_end.strftime('%Y-%m-%d %H:%M:%S')}"
         except ValueError:
             return "❌ Подписка имеет неверный формат."
@@ -72,55 +72,51 @@ async def get_subscription_status(user_id):
 # Основной обработчик команды /start
 @dp.message_handler(commands=["start"])
 async def start(msg: types.Message):
-    # Главное меню с кнопками
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add(KeyboardButton("🔎 Найти username"))
+    keyboard.add(KeyboardButton("🎲 Сгенерировать"))
     keyboard.add(KeyboardButton("💎 Купить подписку"))
-    keyboard.add(KeyboardButton("📊 Статус подписки"))
+    keyboard.add(KeyboardButton("📅 Статус подписки"))
+    keyboard.add(KeyboardButton("⚙️ Админ панель"))
 
-    # Если администратор, добавляем кнопку для статистики
+    # Если администратор, добавляем дополнительные кнопки
     if msg.from_user.id == ADMIN_ID:
         keyboard.add(KeyboardButton("📊 Статистика"))
-        keyboard.add(KeyboardButton("🔒 Админ Панель"))
-
+    
     await msg.answer("Привет! Я бот для поиска свободных username. Выбери команду из меню.", reply_markup=keyboard)
 
-# Обработчик кнопки "Найти username"
-@dp.message_handler(lambda message: message.text == "🔎 Найти username")
-async def find_username(msg: types.Message):
-    if not await check_subscription(msg.from_user.id):
-        await msg.answer("❌ У вас нет подписки. Пожалуйста, купите подписку, чтобы искать username.")
-        return
+# Обработчик кнопки «Сгенерировать»
+@dp.message_handler(lambda message: message.text == "🎲 Сгенерировать")
+async def generate(msg: types.Message):
+    await msg.answer("Функция «Сгенерировать» запущена. Пожалуйста, уточните, что нужно сгенерировать.")
 
-    usernames = []
-    attempts = 0
-
-    while len(usernames) < 5 and attempts < 100:
-        username = generate_usernames(count=1)[0]
-        available = await is_username_available(f"@{username}")
-        if available:
-            usernames.append(username)
-        attempts += 1
-
-    if len(usernames) > 0:
-        await msg.answer(f"Вот 5 доступных username:\n@{', @'.join(usernames)}")
-    else:
-        await msg.answer("❌ Не удалось найти свободные username после 100 попыток. Попробуйте позже.")
-
-# Обработчик кнопки "Купить подписку"
+# Обработчик кнопки «Купить подписку»
 @dp.message_handler(lambda message: message.text == "💎 Купить подписку")
 async def buy_subscription(msg: types.Message):
     await msg.answer(
         "💎 Купить подписку можно у @wvmmy.\n1 покупка — 100₽\n2 покупка — 75₽\n3+ — 50₽/мес."
     )
 
-# Статус подписки
-@dp.message_handler(lambda message: message.text == "📊 Статус подписки")
+# Обработчик кнопки «Статус подписки»
+@dp.message_handler(lambda message: message.text == "📅 Статус подписки")
 async def subscription_status(msg: types.Message):
     status = await get_subscription_status(msg.from_user.id)
     await msg.answer(status)
 
-# Статистика
+# Обработчик кнопки «Админ панель»
+@dp.message_handler(lambda message: message.text == "⚙️ Админ панель")
+async def admin_panel(msg: types.Message):
+    if msg.from_user.id != ADMIN_ID:
+        await msg.answer("❌ Вы не администратор.")
+        return
+    
+    admin_keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
+    admin_keyboard.add(KeyboardButton("🔑 Выдать подписку"))
+    admin_keyboard.add(KeyboardButton("❌ Убрать подписку"))
+    admin_keyboard.add(KeyboardButton("🔙 Назад в меню"))
+    
+    await msg.answer("Админ панель: выберите действие", reply_markup=admin_keyboard)
+
+# Статистика (для админа)
 @dp.message_handler(lambda message: message.text == "📊 Статистика")
 async def stats(msg: types.Message):
     if msg.from_user.id != ADMIN_ID:
@@ -129,28 +125,13 @@ async def stats(msg: types.Message):
 
     async with aiosqlite.connect("database.db") as db:
         async with db.execute("SELECT COUNT(*) FROM users") as cur:
-            total_users = (await cur.fetchone())[0]
+            total_users = (await cur.fetchone())
         async with db.execute("SELECT COUNT(*) FROM users WHERE sub_until IS NOT NULL") as cur:
-            subscribed_users = (await cur.fetchone())[0]
+            subscribed_users = (await cur.fetchone())
     
     await msg.answer(f"Общее количество пользователей: {total_users}\nПользователей с подпиской: {subscribed_users}")
 
-# Админ панель для управления подписками
-@dp.message_handler(lambda message: message.text == "🔒 Админ Панель")
-async def admin_panel(msg: types.Message):
-    if msg.from_user.id != ADMIN_ID:
-        await msg.answer("❌ Вы не администратор.")
-        return
-    
-    # Кнопки для админа
-    admin_keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
-    admin_keyboard.add(KeyboardButton("🔑 Выдать подписку"))
-    admin_keyboard.add(KeyboardButton("❌ Убрать подписку"))
-    admin_keyboard.add(KeyboardButton("🔙 Назад в меню"))
-    
-    await msg.answer("Админ панель: выберите действие", reply_markup=admin_keyboard)
-
-# Выдача подписки
+# Выдача подписки (админ)
 @dp.message_handler(lambda message: message.text == "🔑 Выдать подписку")
 async def give_subscription(msg: types.Message):
     if msg.from_user.id != ADMIN_ID:
@@ -167,7 +148,7 @@ async def input_id_for_subscription(msg: types.Message):
         return
 
     try:
-        user_id, months = int(msg.text.split()[1]), int(msg.text.split()[2])  # получаем ID и месяцы
+        user_id, months = int(msg.text.split()), int(msg.text.split())  # получаем ID и месяцы
     except (IndexError, ValueError):
         await msg.answer("❌ Неверный формат. Используйте команду в формате: /id <user_id> <months>")
         return
@@ -175,19 +156,14 @@ async def input_id_for_subscription(msg: types.Message):
     await add_subscription(user_id, months)
     await msg.answer(f"✅ Подписка успешно выдана пользователю {user_id} на {months} месяцев.")
 
-# Инициализация базы данных
-async def init_db():
-    async with aiosqlite.connect("database.db") as db:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY,
-                sub_until TEXT
-            )
-        """)
-        await db.commit()
-    print("Database initialized successfully.")
+# Возвращение в главное меню
+@dp.message_handler(lambda message: message.text == "🔙 Назад в меню")
+async def back_to_menu(msg: types.Message):
+    keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.add(KeyboardButton("🎲 Сгенерировать"))
+    keyboard.add(KeyboardButton("💎 Купить подписку"))
+    keyboard.add(KeyboardButton("📅 Статус подписки"))
+    keyboard.add(KeyboardButton("⚙️ Админ панель"))
 
-if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(init_db())  # Инициализация базы данных перед запуском бота
-    executor.start_polling(dp, skip_updates=True)
+    if msg.from_user.id == ADMIN_ID:
+        keyboard.add(KeyboardButton("📊 Статистика
