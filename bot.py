@@ -68,7 +68,8 @@ async def check_subscription(user_id):
             data = await cur.fetchone()
     if not data or not data[0]:
         return False
-    return datetime.datetime.now() < datetime.datetime.strptime(data[0], "%Y-%m-%d")
+    sub_end = datetime.datetime.strptime(data[0], "%Y-%m-%d %H:%M:%S")  # Используем точный формат
+    return datetime.datetime.now() < sub_end
 
 # Статус подписки
 async def get_subscription_status(user_id):
@@ -76,14 +77,18 @@ async def get_subscription_status(user_id):
         async with db.execute("SELECT sub_until FROM users WHERE id=?", (user_id,)) as cur:
             data = await cur.fetchone()
     if data:
-        return f"Подписка активна до {data[0]}"
-    return "Подписка отсутствует"
+        try:
+            sub_end = datetime.datetime.strptime(data[0], "%Y-%m-%d %H:%M:%S")
+            return f"Подписка активна до {sub_end.strftime('%Y-%m-%d %H:%M:%S')}"
+        except ValueError:
+            return "❌ Подписка имеет неверный формат."
+    return "Подписка отсутствует."
 
 # Добавление подписки
 async def add_subscription(user_id, months=1):
     sub_end = datetime.datetime.now() + datetime.timedelta(days=30 * months)
     async with aiosqlite.connect("database.db") as db:
-        await db.execute("INSERT OR REPLACE INTO users (id, sub_until) VALUES (?, ?)", (user_id, sub_end.strftime("%Y-%m-%d")))
+        await db.execute("INSERT OR REPLACE INTO users (id, sub_until) VALUES (?, ?)", (user_id, sub_end.strftime("%Y-%m-%d %H:%M:%S")))
         await db.commit()
 
 # Админ панель
@@ -195,28 +200,7 @@ async def input_id_for_subscription(msg: types.Message):
 
     # Выдаем подписку пользователю
     await add_subscription(user_id, months)
-    await msg.answer(f"✅ Подписка успешно выдана пользователю {user_id} на {months} месяц(ев).")
-
-# Обработчик команды ввода ID пользователя для удаления подписки
-@dp.message_handler(lambda message: message.text.startswith("/remove_id"))
-async def input_id_for_removal(msg: types.Message):
-    if msg.from_user.id != ADMIN_ID:
-        await msg.answer("❌ Вы не администратор.")
-        return
-
-    # Получаем ID из сообщения
-    try:
-        user_id = int(msg.text.split()[1])  # получаем ID пользователя для удаления подписки
-    except (IndexError, ValueError):
-        await msg.answer("❌ Неверный формат. Используйте команду в формате: /remove_id <user_id>")
-        return
-
-    # Удаляем подписку у пользователя
-    async with aiosqlite.connect("database.db") as db:
-        await db.execute("UPDATE users SET sub_until=NULL WHERE id=?", (user_id,))
-        await db.commit()
-
-    await msg.answer(f"❌ Подписка успешно удалена у пользователя {user_id}.")
+    await msg.answer(f"✅ Подписка успешно выдана пользователю {user_id} на {months} месяцев.")
 
 # Завершение админ панели
 @dp.message_handler(lambda message: message.text == "🚫 Завершить админ панель")
