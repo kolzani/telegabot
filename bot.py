@@ -95,6 +95,7 @@ async def find_username(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     if not await check_subscription(user_id):
         await bot.answer_callback_query(callback_query.id, "❌ У вас нет подписки. Пожалуйста, купите подписку, чтобы искать username.")
+        await bot.send_message(user_id, "❌ Подписка отсутствует. Пожалуйста, купите подписку.")
         return
 
     usernames = []
@@ -109,25 +110,30 @@ async def find_username(callback_query: types.CallbackQuery):
 
     if len(usernames) > 0:
         await bot.answer_callback_query(callback_query.id, f"Вот 5 доступных username:\n@{', @'.join(usernames)}")
+        await bot.send_message(callback_query.from_user.id, f"Вот 5 доступных username:\n@{', @'.join(usernames)}")
     else:
         await bot.answer_callback_query(callback_query.id, "❌ Не удалось найти свободные username после 100 попыток. Попробуйте позже.")
+        await bot.send_message(callback_query.from_user.id, "❌ Не удалось найти свободные username после 100 попыток. Попробуйте позже.")
 
 # Обработчик кнопки "Купить подписку"
 @dp.callback_query_handler(lambda c: c.data == "buy_subscription")
 async def buy_subscription(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id, "💎 Купить подписку можно у @wvmmy.\n1 покупка — 100₽\n2 покупка — 75₽\n3+ — 50₽/мес.")
+    await bot.send_message(callback_query.from_user.id, "💎 Купить подписку можно у @wvmmy.\n1 покупка — 100₽\n2 покупка — 75₽\n3+ — 50₽/мес.")
 
 # Статус подписки
 @dp.callback_query_handler(lambda c: c.data == "check_subscription")
 async def subscription_status(callback_query: types.CallbackQuery):
     status = await get_subscription_status(callback_query.from_user.id)
     await bot.answer_callback_query(callback_query.id, status)
+    await bot.send_message(callback_query.from_user.id, status)
 
 # Статистика
 @dp.callback_query_handler(lambda c: c.data == "view_stats")
 async def stats(callback_query: types.CallbackQuery):
     if callback_query.from_user.id != ADMIN_ID:
         await bot.answer_callback_query(callback_query.id, "❌ Вы не администратор.")
+        await bot.send_message(callback_query.from_user.id, "❌ Вы не администратор.")
         return
 
     async with aiosqlite.connect("database.db") as db:
@@ -137,12 +143,14 @@ async def stats(callback_query: types.CallbackQuery):
             subscribed_users = (await cur.fetchone())[0]
     
     await bot.answer_callback_query(callback_query.id, f"Общее количество пользователей: {total_users}\nПользователей с подпиской: {subscribed_users}")
+    await bot.send_message(callback_query.from_user.id, f"Общее количество пользователей: {total_users}\nПользователей с подпиской: {subscribed_users}")
 
 # Админ панель для управления подписками
 @dp.callback_query_handler(lambda c: c.data == "admin_panel")
 async def admin_panel(callback_query: types.CallbackQuery):
     if callback_query.from_user.id != ADMIN_ID:
         await bot.answer_callback_query(callback_query.id, "❌ Вы не администратор.")
+        await bot.send_message(callback_query.from_user.id, "❌ Вы не администратор.")
         return
     
     # Кнопки для админа
@@ -154,45 +162,14 @@ async def admin_panel(callback_query: types.CallbackQuery):
     )
     
     await bot.answer_callback_query(callback_query.id, "Админ панель: выберите действие", reply_markup=admin_keyboard)
+    await bot.send_message(callback_query.from_user.id, "Админ панель: выберите действие")
 
 # Выдача подписки
 @dp.callback_query_handler(lambda c: c.data == "give_subscription")
 async def give_subscription(callback_query: types.CallbackQuery):
     if callback_query.from_user.id != ADMIN_ID:
         await bot.answer_callback_query(callback_query.id, "❌ Вы не администратор.")
+        await bot.send_message(callback_query.from_user.id, "❌ Вы не администратор.")
         return
 
-    await bot.answer_callback_query(callback_query.id, "Введите ID пользователя и срок подписки в месяцах (например: 123456789 3)")
-
-# Обработка ввода ID для подписки
-@dp.message_handler(lambda message: message.text.startswith("/id"))
-async def input_id_for_subscription(msg: types.Message):
-    if msg.from_user.id != ADMIN_ID:
-        await msg.answer("❌ Вы не администратор.")
-        return
-
-    try:
-        user_id, months = int(msg.text.split()[1]), int(msg.text.split()[2])  # получаем ID и месяцы
-    except (IndexError, ValueError):
-        await msg.answer("❌ Неверный формат. Используйте команду в формате: /id <user_id> <months>")
-        return
-
-    await add_subscription(user_id, months)
-    await msg.answer(f"✅ Подписка успешно выдана пользователю {user_id} на {months} месяцев.")
-
-# Инициализация базы данных
-async def init_db():
-    async with aiosqlite.connect("database.db") as db:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY,
-                sub_until TEXT
-            )
-        """)
-        await db.commit()
-    print("Database initialized successfully.")
-
-if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(init_db())  # Инициализация базы данных перед запуском бота
-    executor.start_polling(dp, skip_updates=True)
+    await bot.answer_callback_query(callback_query.id, "Введите ID пользователя и срок подписки в месяцах (например: 123456789 3
