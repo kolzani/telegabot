@@ -1,176 +1,191 @@
-import asyncio
-import datetime
-import aiosqlite
 import random
 import string
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-from aiogram.utils import executor
+import json
+import time
+import logging
+import os
+import asyncio
 
-# Токен и ID админа
-TOKEN = '8648186725:AAG8LqXwmsyEevpBDmi08wf6FCXXAOQq9pU'  # Вставь свой токен
-ADMIN_ID = 6228421196  # Вставь свой ID (можно узнать через @userinfobot)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher(bot)
+logging.basicConfig(level=logging.INFO)
 
-# Инициализация базы данных
-async def init_db():
-    async with aiosqlite.connect("database.db") as db:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY,
-                sub_until TEXT
-            )
-        """)
-        await db.commit()
-    print("Database initialized successfully.")
+# ================== ТОКЕН ==================
+# Вариант 1: через переменную окружения (рекомендовано)
+BOT_TOKEN = "8648186725:AAG8LqXwmsyEevpBDmi08wf6FCXXAOQq9pU"
 
-# Генерация случайных 5-значных username
-def generate_usernames(count=5):
-    return [''.join(random.choice(string.ascii_lowercase) for _ in range(5)) for _ in range(count)]
+# Вариант 2: напрямую в коде (для теста)
+# BOT_TOKEN = "8525866998:AAEYebntrTi01nBgeoFkSRq6oHLcW-lGPw4"
 
-# Проверка доступности username
-async def is_username_available(username):
+if not BOT_TOKEN:
+    raise ValueError("❌ Токен не найден! Установите переменную окружения BOT_TOKEN")
+
+ADMIN_ID = 6228421196
+DB_FILE = "subscriptions.json"
+
+# ================= БАЗА =================
+def load_db():
+    if not os.path.exists(DB_FILE):
+        return {}
+    with open(DB_FILE, "r") as f:
+        return json.load(f)
+
+def save_db():
+    with open(DB_FILE, "w") as f:
+        json.dump(db, f)
+
+db = load_db()
+
+def has_subscription(user_id):
+    uid = str(user_id)
+    return uid in db and db[uid] > time.time()
+
+def add_subscription(user_id, days):
+    db[str(user_id)] = int(time.time()) + days * 86400
+    save_db()
+
+def remove_subscription(user_id):
+    db[str(user_id)] = 0
+    save_db()
+
+# ================= USERNAME =================
+def generate_username():
+    return ''.join(random.choice(string.ascii_lowercase) for _ in range(5))
+
+async def check_username(bot, username):
     try:
-        # Попробуем получить информацию о пользователе по username
-        await bot.get_chat(username)
+        await bot.get_chat(f"@{username}")
+        # Если get_chat не выбросил исключение — юзернейм занят
         return False
     except:
+        # Если возникло исключение — юзернейм свободен
         return True
 
-# Добавление подписки (сохранение даты окончания подписки)
-async def add_subscription(user_id, months=1):
-    sub_end = datetime.datetime.now() + datetime.timedelta(days=30 * months)
-    async with aiosqlite.connect("database.db") as db:
-        await db.execute("INSERT OR REPLACE INTO users (id, sub_until) VALUES (?, ?)", (user_id, sub_end.strftime("%Y-%m-%d %H:%M:%S")))
-        await db.commit()
+async def find_usernames(bot, amount=5):
+    found = []
+    checked = set()
 
-# Удаление подписки
-async def remove_subscription(user_id):
-    async with aiosqlite.connect("database.db") as db:
-        await db.execute("DELETE FROM users WHERE id=?", (user_id,))
-        await db.commit()
+    while len(found) < amount and len(checked) < 10000:
+        username = generate_username()
+        if username in checked:
+            continue
+        checked.add(username)
 
-# Проверка подписки
-async def check_subscription(user_id):
-    async with aiosqlite.connect("database.db") as db:
-        async with db.execute("SELECT sub_until FROM users WHERE id=?", (user_id,)) as cur:
-            data = await cur.fetchone()
-    if not data or not data[0]:
-        return False
-    sub_end = datetime.datetime.strptime(data[0], "%Y-%m-%d %H:%M:%S")  # Используем точный формат
-    return datetime.datetime.now() < sub_end  # Проверка с точным временем
+        if await check_username(bot, username):
+            found.append(username)
 
-# Статус подписки
-async def get_subscription_status(user_id):
-    async with aiosqlite.connect("database.db") as db:
-        async with db.execute("SELECT sub_until FROM users WHERE id=?", (user_id,)) as cur:
-            data = await cur.fetchone()
-    if data:
-        try:
-            sub_end = datetime.datetime.strptime(data[0], "%Y-%m-%d %H:%M:%S")
-            return f"Подписка активна до {sub_end.strftime('%Y-%m-%d %H:%M:%S')}"
-        except ValueError:
-            return "❌ Подписка имеет неверный формат."
-    return "Подписка отсутствует."
+        # Небольшая пауза, чтобы Telegram не блокировал запросы
+        await asyncio.sleep(0.05)
 
-# Основной обработчик команды /start
-@dp.message_handler(commands=["start"])
-async def start(msg: types.Message):
-    keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add(KeyboardButton("🎲 Сгенерировать"))
-    keyboard.add(KeyboardButton("💎 Купить подписку"))
-    keyboard.add(KeyboardButton("📅 Статус подписки"))
-    keyboard.add(KeyboardButton("⚙️ Админ панель"))
+    return found
 
-    # Если администратор, добавляем дополнительные кнопки
-    if msg.from_user.id == ADMIN_ID:
-        keyboard.add(KeyboardButton("📊 Статистика"))
-    
-    await msg.answer("Привет! Я бот для поиска свободных username. Выбери команду из меню.", reply_markup=keyboard)
+# ================= МЕНЮ =================
+def menu(user_id):
+    keyboard = [
+        [InlineKeyboardButton("🎲 Сгенерировать", callback_data="gen")],
+        [InlineKeyboardButton("💎 Купить подписку", callback_data="buy")],
+        [InlineKeyboardButton("📅 Статус подписки", callback_data="status")]
+    ]
+    if user_id == ADMIN_ID:
+        keyboard.append([InlineKeyboardButton("⚙️ Админ панель", callback_data="admin")])
+    return InlineKeyboardMarkup(keyboard)
 
-# Обработчик кнопки «Сгенерировать»
-@dp.message_handler(lambda message: message.text == "🎲 Сгенерировать")
-async def generate(msg: types.Message):
-    await msg.answer("Функция «Сгенерировать» запущена. Пожалуйста, уточните, что нужно сгенерировать.")
+def admin_menu():
+    keyboard = [
+        [InlineKeyboardButton("👥 Пользователи", callback_data="users")],
+        [InlineKeyboardButton("📊 Статистика", callback_data="stats")],
+        [InlineKeyboardButton("⬅ Назад", callback_data="back")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
-# Обработчик кнопки «Купить подписку»
-@dp.message_handler(lambda message: message.text == "💎 Купить подписку")
-async def buy_subscription(msg: types.Message):
-    await msg.answer(
-        "💎 Купить подписку можно у @wvmmy.\n1 покупка — 100₽\n2 покупка — 75₽\n3+ — 50₽/мес."
+# ================= START =================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if str(user_id) not in db:
+        db[str(user_id)] = 0
+        save_db()
+    await update.message.reply_text(
+        "🤖 Бот генерации 5-буквенных username",
+        reply_markup=menu(user_id)
     )
 
-# Обработчик кнопки «Статус подписки»
-@dp.message_handler(lambda message: message.text == "📅 Статус подписки")
-async def subscription_status(msg: types.Message):
-    status = await get_subscription_status(msg.from_user.id)
-    await msg.answer(status)
+# ================= КНОПКИ =================
+async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
 
-# Обработчик кнопки «Админ панель»
-@dp.message_handler(lambda message: message.text == "⚙️ Админ панель")
-async def admin_panel(msg: types.Message):
-    if msg.from_user.id != ADMIN_ID:
-        await msg.answer("❌ Вы не администратор.")
+    if query.data == "buy":
+        await query.message.edit_text(
+            "Напишите @wvmmy для покупки\nЦена: 50 руб / месяц",
+            reply_markup=menu(user_id)
+        )
+    elif query.data == "status":
+        if has_subscription(user_id):
+            days = int((db[str(user_id)] - time.time()) / 86400)
+            text = f"💎 Подписка активна\nОсталось дней: {days}"
+        else:
+            text = "❌ Подписки нет"
+        await query.message.edit_text(text, reply_markup=menu(user_id))
+    elif query.data == "gen":
+        if not has_subscription(user_id):
+            await query.message.edit_text(
+                "❌ Генерация доступна только по подписке",
+                reply_markup=menu(user_id)
+            )
+            return
+        await query.message.edit_text("🔍 Ищу свободные username...")
+        usernames = await find_usernames(context.bot)
+        if usernames:
+            text = "🎯 Свободные username:\n\n" + "\n".join(f"@{u}" for u in usernames)
+        else:
+            text = "❌ Не удалось найти"
+        await query.message.edit_text(text, reply_markup=menu(user_id))
+    elif query.data == "admin" and user_id == ADMIN_ID:
+        await query.message.edit_text("⚙️ Админ панель", reply_markup=admin_menu())
+    elif query.data == "users" and user_id == ADMIN_ID:
+        await query.message.edit_text(f"👥 Пользователей: {len(db)}", reply_markup=admin_menu())
+    elif query.data == "stats" and user_id == ADMIN_ID:
+        active = sum(1 for u in db if db[u] > time.time())
+        await query.message.edit_text(
+            f"📊 Статистика\n\nВсего: {len(db)}\nПодписок: {active}",
+            reply_markup=admin_menu()
+        )
+    elif query.data == "back":
+        await query.message.edit_text("Главное меню", reply_markup=menu(user_id))
+
+# ================= АДМИН =================
+async def givesub(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
         return
-    
-    admin_keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
-    admin_keyboard.add(KeyboardButton("🔑 Выдать подписку"))
-    admin_keyboard.add(KeyboardButton("❌ Убрать подписку"))
-    admin_keyboard.add(KeyboardButton("🔙 Назад в меню"))
-    
-    await msg.answer("Админ панель: выберите действие", reply_markup=admin_keyboard)
-
-# Статистика (для админа)
-@dp.message_handler(lambda message: message.text == "📊 Статистика")
-async def stats(msg: types.Message):
-    if msg.from_user.id != ADMIN_ID:
-        await msg.answer("❌ Вы не администратор.")
+    if len(context.args) != 2:
+        await update.message.reply_text("/givesub USER_ID DAYS")
         return
+    user = int(context.args[0])
+    days = int(context.args[1])
+    add_subscription(user, days)
+    await update.message.reply_text("✅ Подписка выдана")
 
-    async with aiosqlite.connect("database.db") as db:
-        async with db.execute("SELECT COUNT(*) FROM users") as cur:
-            total_users = (await cur.fetchone())[0]
-        async with db.execute("SELECT COUNT(*) FROM users WHERE sub_until IS NOT NULL") as cur:
-            subscribed_users = (await cur.fetchone())[0]
-    
-    await msg.answer(f"Общее количество пользователей: {total_users}\nПользователей с подпиской: {subscribed_users}")
-
-# Выдача подписки (админ)
-@dp.message_handler(lambda message: message.text == "🔑 Выдать подписку")
-async def give_subscription(msg: types.Message):
-    if msg.from_user.id != ADMIN_ID:
-        await msg.answer("❌ Вы не администратор.")
+async def removesub(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
         return
-
-    await msg.answer("Введите ID пользователя и срок подписки в месяцах (например: 123456789 3)")
-
-# Обработка ввода ID для подписки
-@dp.message_handler(lambda message: message.text.startswith("/id"))
-async def input_id_for_subscription(msg: types.Message):
-    if msg.from_user.id != ADMIN_ID:
-        await msg.answer("❌ Вы не администратор.")
+    if len(context.args) != 1:
+        await update.message.reply_text("/removesub USER_ID")
         return
+    user = int(context.args[0])
+    remove_subscription(user)
+    await update.message.reply_text("❌ Подписка удалена")
 
-    try:
-        user_id, months = int(msg.text.split()[1]), int(msg.text.split()[2])  # получаем ID и месяцы
-    except (IndexError, ValueError):
-        await msg.answer("❌ Неверный формат. Используйте команду в формате: /id <user_id> <months>")
-        return
+# ================= ЗАПУСК =================
+def main():
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("givesub", givesub))
+    app.add_handler(CommandHandler("removesub", removesub))
+    app.add_handler(CallbackQueryHandler(buttons))
+    print("Бот запущен")
+    app.run_polling()
 
-    await add_subscription(user_id, months)
-    await msg.answer(f"✅ Подписка успешно выдана пользователю {user_id} на {months} месяцев.")
-
-# Удаление подписки (админ)
-@dp.message_handler(lambda message: message.text == "❌ Убрать подписку")
-async def remove_subscription_handler(msg: types.Message):
-    if msg.from_user.id != ADMIN_ID:
-        await msg.answer("❌ Вы не администратор.")
-        return
-
-    await msg.answer("Введите ID пользователя для удаления подписки.")
-
-# Обработка ввода ID для удаления подписки
-@dp.message_handler(lambda message: message.text.startswith("/remove"))
-async def remove_subscription_input
+if __name__ == "__main__":
+    main()
