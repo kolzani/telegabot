@@ -2,6 +2,7 @@ import random
 import string
 import json
 import time
+import asyncio
 import logging
 import os
 
@@ -9,61 +10,72 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from telegram.error import BadRequest
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
+logging.basicConfig(level=logging.INFO)
 
-BOT_TOKEN = "8525866998:AAEYebntrTi01nBgeoFkSRq6oHLcW-lGPw4"
+BOT_TOKEN = os.getenv("8525866998:AAEYebntrTi01nBgeoFkSRq6oHLcW-lGPw4")
 ADMIN_ID = 6228421196
 DB_FILE = "subscriptions.json"
 
 # ================= БАЗА =================
 
 def load_db():
-    try:
-        with open(DB_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
+    if not os.path.exists(DB_FILE):
         return {}
+    with open(DB_FILE, "r") as f:
+        return json.load(f)
 
-def save_db(data):
-    with open(DB_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f)
+def save_db():
+    with open(DB_FILE, "w") as f:
+        json.dump(db, f)
 
 db = load_db()
 
 def has_subscription(user_id):
-    user_id = str(user_id)
-    return user_id in db and db[user_id] > time.time()
+    uid = str(user_id)
+    return uid in db and db[uid] > time.time()
 
 def add_subscription(user_id, days):
-    expire = int(time.time()) + days * 86400
-    db[str(user_id)] = expire
-    save_db(db)
+    db[str(user_id)] = int(time.time()) + days * 86400
+    save_db()
 
 def remove_subscription(user_id):
-    if str(user_id) in db:
-        db[str(user_id)] = 0
-        save_db(db)
+    db[str(user_id)] = 0
+    save_db()
 
 # ================= USERNAME =================
 
-def generate_username(length=5):
-    return ''.join(random.choice(string.ascii_lowercase) for _ in range(length))
+def generate_username():
+    return ''.join(random.choice(string.ascii_lowercase) for _ in range(5))
 
-async def check_username_availability(bot, username: str) -> bool:
+async def check_username(bot, username):
     try:
         await bot.get_chat(f"@{username}")
         return False
-    except BadRequest as e:
-        if "Username not found" in str(e):
-            return True
-        return False
+    except:
+        return True
+
+async def find_usernames(bot, amount=5):
+
+    found = []
+    checked = set()
+
+    while len(found) < amount and len(checked) < 5000:
+
+        username = generate_username()
+
+        if username in checked:
+            continue
+
+        checked.add(username)
+
+        if await check_username(bot, username):
+            found.append(username)
+
+    return found
 
 # ================= МЕНЮ =================
 
-def menu(user_id=None):
+def menu(user_id):
 
     keyboard = [
         [InlineKeyboardButton("🎲 Сгенерировать", callback_data="gen")],
@@ -72,17 +84,17 @@ def menu(user_id=None):
     ]
 
     if user_id == ADMIN_ID:
-        keyboard.append([InlineKeyboardButton("⚙️ Админ панель", callback_data="admin")])
+        keyboard.append(
+            [InlineKeyboardButton("⚙️ Админ панель", callback_data="admin")]
+        )
 
     return InlineKeyboardMarkup(keyboard)
 
 def admin_menu():
 
     keyboard = [
-        [InlineKeyboardButton("👥 Пользователи", callback_data="admin_users")],
-        [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
-        [InlineKeyboardButton("💎 Как выдать подписку", callback_data="admin_give")],
-        [InlineKeyboardButton("❌ Как удалить подписку", callback_data="admin_remove")],
+        [InlineKeyboardButton("👥 Пользователи", callback_data="users")],
+        [InlineKeyboardButton("📊 Статистика", callback_data="stats")],
         [InlineKeyboardButton("⬅ Назад", callback_data="back")]
     ]
 
@@ -96,10 +108,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if str(user_id) not in db:
         db[str(user_id)] = 0
-        save_db(db)
+        save_db()
 
     await update.message.reply_text(
-        "🤖 Бот генерации 5-буквенных юзернеймов",
+        "🤖 Бот генерации 5-буквенных username",
         reply_markup=menu(user_id)
     )
 
@@ -112,34 +124,26 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = query.from_user.id
 
-    # купить
     if query.data == "buy":
 
         await query.message.edit_text(
-            "Напишите @wvmmy для покупки подписки\nЦена: 50 руб / месяц",
+            "Напишите @wvmmy для покупки\nЦена: 50 руб / месяц",
             reply_markup=menu(user_id)
         )
 
-    # статус
     elif query.data == "status":
 
         if has_subscription(user_id):
 
             days = int((db[str(user_id)] - time.time()) / 86400)
 
-            await query.message.edit_text(
-                f"💎 Подписка активна\nОсталось дней: {days}",
-                reply_markup=menu(user_id)
-            )
+            text = f"💎 Подписка активна\nОсталось дней: {days}"
 
         else:
+            text = "❌ Подписки нет"
 
-            await query.message.edit_text(
-                "❌ Подписки нет",
-                reply_markup=menu(user_id)
-            )
+        await query.message.edit_text(text, reply_markup=menu(user_id))
 
-    # генерация
     elif query.data == "gen":
 
         if not has_subscription(user_id):
@@ -150,40 +154,21 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        available = []
-        checked = set()
+        await query.message.edit_text("🔍 Ищу свободные username...")
 
-        while len(available) < 5 and len(checked) < 2000:
+        usernames = await find_usernames(context.bot)
 
-            username = generate_username()
-
-            if username in checked:
-                continue
-
-            checked.add(username)
-
-            free = await check_username_availability(context.bot, username)
-
-            if free:
-                available.append(username)
-
-        if available:
+        if usernames:
 
             text = "🎯 Свободные username:\n\n"
 
-            for u in available:
+            for u in usernames:
                 text += f"@{u}\n"
 
         else:
+            text = "❌ Не удалось найти"
 
-            text = "Не удалось найти свободные username"
-
-        await query.message.edit_text(
-            text,
-            reply_markup=menu(user_id)
-        )
-
-    # ================= АДМИН =================
+        await query.message.edit_text(text, reply_markup=menu(user_id))
 
     elif query.data == "admin":
 
@@ -195,19 +180,17 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=admin_menu()
         )
 
-    elif query.data == "admin_users":
+    elif query.data == "users":
 
         if user_id != ADMIN_ID:
             return
 
-        total = len(db)
-
         await query.message.edit_text(
-            f"👥 Пользователей: {total}",
+            f"👥 Пользователей: {len(db)}",
             reply_markup=admin_menu()
         )
 
-    elif query.data == "admin_stats":
+    elif query.data == "stats":
 
         if user_id != ADMIN_ID:
             return
@@ -216,24 +199,8 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.edit_text(
             f"📊 Статистика\n\n"
-            f"Всего пользователей: {len(db)}\n"
-            f"Активных подписок: {active}",
-            reply_markup=admin_menu()
-        )
-
-    elif query.data == "admin_give":
-
-        await query.message.edit_text(
-            "Команда выдачи подписки:\n\n"
-            "/givesub USER_ID DAYS",
-            reply_markup=admin_menu()
-        )
-
-    elif query.data == "admin_remove":
-
-        await query.message.edit_text(
-            "Команда удаления подписки:\n\n"
-            "/removesub USER_ID",
+            f"Всего: {len(db)}\n"
+            f"Подписок: {active}",
             reply_markup=admin_menu()
         )
 
@@ -244,7 +211,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=menu(user_id)
         )
 
-# ================= АДМИН КОМАНДЫ =================
+# ================= АДМИН =================
 
 async def givesub(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -252,17 +219,15 @@ async def givesub(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if len(context.args) != 2:
-        await update.message.reply_text("Использование: /givesub USER_ID DAYS")
+        await update.message.reply_text("/givesub USER_ID DAYS")
         return
 
-    user_id = int(context.args[0])
+    user = int(context.args[0])
     days = int(context.args[1])
 
-    add_subscription(user_id, days)
+    add_subscription(user, days)
 
-    await update.message.reply_text(
-        f"✅ Подписка выдана {user_id} на {days} дней"
-    )
+    await update.message.reply_text("✅ Подписка выдана")
 
 async def removesub(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -270,12 +235,12 @@ async def removesub(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if len(context.args) != 1:
-        await update.message.reply_text("Использование: /removesub USER_ID")
+        await update.message.reply_text("/removesub USER_ID")
         return
 
-    user_id = int(context.args[0])
+    user = int(context.args[0])
 
-    remove_subscription(user_id)
+    remove_subscription(user)
 
     await update.message.reply_text("❌ Подписка удалена")
 
@@ -297,4 +262,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
