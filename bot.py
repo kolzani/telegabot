@@ -9,7 +9,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup
 from aiogram.utils import executor
 
-TOKEN = "8525866998:AAEYebntrTi01nBgeoFkSRq6oHLcW-lGPw4"
+TOKEN = "8648186725:AAG8LqXwmsyEevpBDmi08wf6FCXXAOQq9pU"
 ADMIN_ID = 6228421196
 
 bot = Bot(token=TOKEN)
@@ -328,3 +328,4 @@ if __name__ == "__main__":
     loop.run_until_complete(init_db())
 
     executor.start_polling(dp)
+
