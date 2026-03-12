@@ -314,34 +314,10 @@ async def give_sub(msg: types.Message):
 
     await msg.answer("Введите ID пользователя и количество дней (например, 123456789 30):")
 
-
-@dp.message_handler(lambda m: m.text.startswith("123"))
-async def give_sub_days(msg: types.Message):
-
-    if msg.from_user.id != ADMIN_ID:
-        return
-
-    try:
-        user_id, days = map(int, msg.text.split())
-        date = datetime.datetime.now() + datetime.timedelta(days=days)
-
-        async with aiosqlite.connect("database.db") as db:
-            await db.execute(
-                "INSERT OR REPLACE INTO users(id, sub_until) VALUES (?,?)",
-                (user_id, date.strftime("%Y-%m-%d"))
-            )
-            await db.commit()
-
-        await msg.answer(f"✅ Подписка выдана пользователю {user_id} до {date.strftime('%Y-%m-%d')}.")
-
-    except:
-        await msg.answer("❌ Неверный формат. Используйте: ID ДНИ.")
-
-
 @dp.message_handler(lambda m: m.text == "🚫 Удалить пользователя")
 async def delete_user(msg: types.Message):
 
-    if msg.from_user.id != ADMIN_ID:
+    if msg.from_user.id != ADMIN_ID:  # Должно быть с двоеточием
         return
 
     await msg.answer("Введите ID пользователя, которого хотите удалить:")
@@ -350,5 +326,18 @@ async def delete_user(msg: types.Message):
 @dp.message_handler(lambda m: m.text.startswith("123"))
 async def delete_user_from_db(msg: types.Message):
 
-    if msg.from_user.id != ADMIN_ID:
+    if msg.from_user.id != ADMIN_ID:  # Должно быть с двоеточием
+        return
+
+    try:
+        user_id = int(msg.text.split()[0])
+
+        async with aiosqlite.connect("database.db") as db:
+            await db.execute("DELETE FROM users WHERE id=?", (user_id,))
+            await db.commit()
+
+        await msg.answer(f"✅ Пользователь {user_id} удалён.")
+    except:
+        await msg.answer("❌ Неверный формат ID.")
+
 
