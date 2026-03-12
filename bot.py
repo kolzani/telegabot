@@ -350,4 +350,5 @@ async def delete_user(msg: types.Message):
 @dp.message_handler(lambda m: m.text.startswith("123"))
 async def delete_user_from_db(msg: types.Message):
 
-    if msg.from_user.id != ADMIN_ID
+    if msg.from_user.id != ADMIN_ID:
+
