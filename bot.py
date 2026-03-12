@@ -1,14 +1,13 @@
 import logging
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import ParseMode
-from aiogram.utils import executor
 import asyncio
 import aiosqlite
+import time
+from aiogram import Bot, Dispatcher, types
+from aiogram.utils import executor
 
-API_TOKEN = '8648186725:AAG8LqXwmsyEevpBDmi08wf6FCXXAOQq9pU'
-ADMIN_ID = 6228421196  # ID администратора
-DATABASE_NAME = 'database.db'
-
+API_TOKEN = '8648186725:AAG8LqXwmsyEevpBDmi08wf6FCXXAOQq9pU'  # Замените на свой токен
+ADMIN_ID = 6228421196  # Замените на свой ID администратора
+DATABASE_NAME = 'database.db'  # Имя вашей базы данных
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -101,5 +100,6 @@ async def handle_subscription(message: types.Message):
 
 # Запуск бота
 if __name__ == '__main__':
+    # Используем asyncio.run() для корректного запуска бота
     asyncio.run(init_db())  # Инициализация базы данных
     executor.start_polling(dp, skip_updates=True)  # Запуск бота
