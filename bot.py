@@ -7,8 +7,8 @@ import os
 import asyncio
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
-from telegram.error import RetryAfter, TimedOut, NetworkError
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
+from telegram.error import RetryAfter, TimedOut, NetworkError, BadRequest
 
 logging.basicConfig(level=logging.INFO)
 
@@ -19,7 +19,7 @@ ADMIN_ID = 6228421196
 DB_FILE = "subscriptions.json"
 
 # ================= АНТИ-БАН =================
-semaphore = asyncio.Semaphore(3)  # ограничиваем параллельные запросы к Telegram
+semaphore = asyncio.Semaphore(3)
 
 # ================= ЛОГ ПРОВЕРОК =================
 checked_usernames_count = 0
@@ -85,7 +85,6 @@ async def check_username(bot, username):
             await bot.get_chat(f"@{username}")
             return False
         except RetryAfter as e:
-            print(f"Rate limit @{username}, жду {e.retry_after}s")
             await asyncio.sleep(e.retry_after)
             return False
         except (TimedOut, NetworkError):
@@ -167,54 +166,51 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     user_id = query.from_user.id
 
-    if query.data == "gen":
-        if not has_subscription(user_id):
-            await query.message.edit_text(
-                "❌ Генерация доступна только по подписке",
-                reply_markup=menu(user_id)
-            )
-            return
-        await query.message.edit_text("🔍 Ищу свободные username...")
-        try:
+    try:
+        if query.data == "gen":
+            if not has_subscription(user_id):
+                await query.message.edit_text(
+                    "❌ Генерация доступна только по подписке",
+                    reply_markup=menu(user_id)
+                )
+                return
+            await query.message.edit_text("🔍 Ищу свободные username...")
             usernames = await find_usernames(context.bot, 10)
-        except Exception as e:
-            print("Ошибка при поиске username:", e)
+            text = "🎯 Свободные username:\n\n" + "\n".join(f"@{u}" for u in usernames) if usernames else "❌ Не удалось найти свободные username"
+            try:
+                await query.message.edit_text(text, reply_markup=menu(user_id))
+            except BadRequest as e:
+                if "Message is not modified" in str(e):
+                    pass
+                else:
+                    raise
+
+        elif query.data == "buy":
             await query.message.edit_text(
-                "❌ Произошла ошибка при проверке username. Попробуйте позже.",
+                "Напишите @wvmmy для покупки\nЦена: 100 после 75 а уже после 3 покупки 50 руб / месяц",
                 reply_markup=menu(user_id)
             )
-            return
-        if usernames:
-            text = "🎯 Свободные username:\n\n" + "\n".join(f"@{u}" for u in usernames)
-        else:
-            text = "❌ Не удалось найти свободные username"
-        await query.message.edit_text(text, reply_markup=menu(user_id))
 
-    elif query.data == "buy":
-        await query.message.edit_text(
-            "Напишите @wvmmy для покупки\nЦена: 100 после 75 а уже после 3 покупки 50 руб / месяц",
-            reply_markup=menu(user_id)
-        )
-    elif query.data == "status":
-        expire = db.get(str(user_id), 0)
-        if expire > time.time():
-            seconds_left = expire - time.time()
-            days = int(seconds_left // 86400)
-            hours = int((seconds_left % 86400) // 3600)
-            text = f"💎 Подписка активна\nОсталось: {days} д. {hours} ч."
-        else:
-            text = "❌ Подписки нет"
-        await query.message.edit_text(text, reply_markup=menu(user_id))
+        elif query.data == "status":
+            expire = db.get(str(user_id), 0)
+            if expire > time.time():
+                seconds_left = expire - time.time()
+                days = int(seconds_left // 86400)
+                hours = int((seconds_left % 86400) // 3600)
+                text = f"💎 Подписка активна\nОсталось: {days} д. {hours} ч."
+            else:
+                text = "❌ Подписки нет"
+            await query.message.edit_text(text, reply_markup=menu(user_id))
 
-    elif query.data == "admin" and user_id == ADMIN_ID:
-        await query.message.edit_text("⚙️ Админ панель", reply_markup=admin_menu())
+        elif query.data == "admin" and user_id == ADMIN_ID:
+            await query.message.edit_text("⚙️ Админ панель", reply_markup=admin_menu())
 
-    elif query.data == "users" and user_id == ADMIN_ID:
-        await query.message.edit_text(f"👥 Пользователей: {len(db)}", reply_markup=admin_menu())
+        elif query.data == "users" and user_id == ADMIN_ID:
+            await query.message.edit_text(f"👥 Пользователей: {len(db)}", reply_markup=admin_menu())
 
-    elif query.data == "stats" and user_id == ADMIN_ID:
-        total, active, expired = get_stats()
-        text = f"""
+        elif query.data == "stats" and user_id == ADMIN_ID:
+            total, active, expired = get_stats()
+            text = f"""
 📊 СТАТИСТИКА БОТА
 
 👥 Пользователей: {total}
@@ -224,35 +220,38 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 🕒 {time.strftime("%H:%M:%S")}
 """
-        await query.message.edit_text(text, reply_markup=admin_menu())
+            await query.message.edit_text(text, reply_markup=admin_menu())
 
-    elif query.data == "log" and user_id == ADMIN_ID:
-        await query.message.edit_text(f"🔍 Проверено username: {checked_usernames_count}", reply_markup=admin_menu())
+        elif query.data == "log" and user_id == ADMIN_ID:
+            await query.message.edit_text(f"🔍 Проверено username: {checked_usernames_count}", reply_markup=admin_menu())
 
-    elif query.data == "addsub" and user_id == ADMIN_ID:
-        await query.message.reply_text(
-            "Введите: USER_ID DAYS\nНапример: 6228421196 30"
-        )
-        context.user_data["action"] = "addsub"
+        elif query.data == "addsub" and user_id == ADMIN_ID:
+            await query.message.reply_text("Введите USER_ID DAYS\nНапример: 6228421196 30")
+            context.user_data["action"] = "addsub"
 
-    elif query.data == "remsub" and user_id == ADMIN_ID:
-        await query.message.reply_text(
-            "Введите USER_ID для удаления подписки\nНапример: 6228421196"
-        )
-        context.user_data["action"] = "remsub"
+        elif query.data == "remsub" and user_id == ADMIN_ID:
+            await query.message.reply_text("Введите USER_ID для удаления подписки\nНапример: 6228421196")
+            context.user_data["action"] = "remsub"
 
-    elif query.data == "back":
-        await query.message.edit_text("Главное меню", reply_markup=menu(user_id))
+        elif query.data == "back":
+            await query.message.edit_text("Главное меню", reply_markup=menu(user_id))
 
-# ================= АДМИН-КОМАНДЫ ВВОДОМ =================
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            pass
+        else:
+            raise
+
+# ================= АДМИН ВВОД =================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
         return
 
-    text = update.message.text.strip()
     if "action" not in context.user_data:
         return
+
+    text = update.message.text.strip()
 
     if context.user_data["action"] == "addsub":
         try:
@@ -261,8 +260,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             days = int(parts[1])
             add_subscription(uid, days)
             await update.message.reply_text(f"✅ Подписка на {days} дн. выдана пользователю {uid}")
-        except Exception as e:
-            await update.message.reply_text(f"❌ Ошибка: {e}")
+        except:
+            await update.message.reply_text("❌ Ошибка! Введите USER_ID и DAYS через пробел.")
         context.user_data.pop("action")
 
     elif context.user_data["action"] == "remsub":
@@ -270,27 +269,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             uid = int(text)
             remove_subscription(uid)
             await update.message.reply_text(f"❌ Подписка удалена у пользователя {uid}")
-        except Exception as e:
-            await update.message.reply_text(f"❌ Ошибка: {e}")
+        except:
+            await update.message.reply_text("❌ Ошибка! Введите правильный USER_ID.")
         context.user_data.pop("action")
 
 # ================= ЗАПУСК =================
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(buttons))
-    app.add_handler(CommandHandler("givesub", handle_message))
-    app.add_handler(CommandHandler("removesub", handle_message))
-    app.add_handler(CommandHandler("message", handle_message))  # ловим текст для админа
-    app.add_handler(CommandHandler("help", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))  # ловим текст админа
 
     print("Бот запущен")
-    while True:
-        try:
-            app.run_polling()
-        except Exception as e:
-            print("Ошибка:", e)
-            time.sleep(10)
+    app.run_polling()  # без while True, polling сам перезапускается
 
 if __name__ == "__main__":
     main()
