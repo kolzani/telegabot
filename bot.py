@@ -2,26 +2,26 @@ import random
 import string
 import json
 import time
-import asyncio
 import logging
 import os
+from dotenv import load_dotenv
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
-from telegram.error import BadRequest
 
 logging.basicConfig(level=logging.INFO)
 
 # ================== ЗАГРУЗКА ТОКЕНА ==================
-BOT_TOKEN = os.getenv("8525866998:AAEYebntrTi01nBgeoFkSRq6oHLcW-lGPw4")  # имя переменной окружения
+load_dotenv()  # загружает переменные из .env
+BOT_TOKEN = os.getenv("8525866998:AAEYebntrTi01nBgeoFkSRq6oHLcW-lGPw4")
+
 if not BOT_TOKEN:
-    raise ValueError("❌ Токен не найден! Установите переменную окружения BOT_TOKEN")
+    raise ValueError("❌ Токен не найден! Проверьте переменную окружения BOT_TOKEN")
 
 ADMIN_ID = 6228421196
 DB_FILE = "subscriptions.json"
 
 # ================= БАЗА =================
-
 def load_db():
     if not os.path.exists(DB_FILE):
         return {}
@@ -47,7 +47,6 @@ def remove_subscription(user_id):
     save_db()
 
 # ================= USERNAME =================
-
 def generate_username():
     return ''.join(random.choice(string.ascii_lowercase) for _ in range(5))
 
@@ -71,7 +70,6 @@ async def find_usernames(bot, amount=5):
     return found
 
 # ================= МЕНЮ =================
-
 def menu(user_id):
     keyboard = [
         [InlineKeyboardButton("🎲 Сгенерировать", callback_data="gen")],
@@ -91,7 +89,6 @@ def admin_menu():
     return InlineKeyboardMarkup(keyboard)
 
 # ================= START =================
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if str(user_id) not in db:
@@ -103,7 +100,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ================= КНОПКИ =================
-
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -149,7 +145,6 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text("Главное меню", reply_markup=menu(user_id))
 
 # ================= АДМИН =================
-
 async def givesub(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -172,7 +167,6 @@ async def removesub(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Подписка удалена")
 
 # ================= ЗАПУСК =================
-
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
