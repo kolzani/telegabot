@@ -172,4 +172,21 @@ async def give_subscription(callback_query: types.CallbackQuery):
         await bot.send_message(callback_query.from_user.id, "❌ Вы не администратор.")
         return
 
-    await bot.answer_callback_query(callback_query.id, "Введите ID пользователя и срок подписки в месяцах (например: 123456789 3
+    await bot.answer_callback_query(callback_query.id, "Введите ID пользователя и срок подписки в месяцах (например: 123456789 3)")
+    await bot.send_message(callback_query.from_user.id, "Введите ID пользователя и срок подписки в месяцах (например: 123456789 3)")
+
+# Убираем подписку
+@dp.callback_query_handler(lambda c: c.data == "remove_subscription")
+async def remove_subscription(callback_query: types.CallbackQuery):
+    if callback_query.from_user.id != ADMIN_ID:
+        await bot.answer_callback_query(callback_query.id, "❌ Вы не администратор.")
+        await bot.send_message(callback_query.from_user.id, "❌ Вы не администратор.")
+        return
+
+    await bot.answer_callback_query(callback_query.id, "Введите ID пользователя для удаления подписки.")
+    await bot.send_message(callback_query.from_user.id, "Введите ID пользователя для удаления подписки.")
+
+# Запуск бота
+if __name__ == '__main__':
+    asyncio.run(init_db())
+    executor.start_polling(dp, skip_updates=True)
