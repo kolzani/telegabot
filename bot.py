@@ -46,14 +46,20 @@ async def add_subscription(user_id, months=1):
         await db.execute("INSERT OR REPLACE INTO users (id, sub_until) VALUES (?, ?)", (user_id, sub_end.strftime("%Y-%m-%d %H:%M:%S")))
         await db.commit()
 
+# Удаление подписки
+async def remove_subscription(user_id):
+    async with aiosqlite.connect("database.db") as db:
+        await db.execute("DELETE FROM users WHERE id=?", (user_id,))
+        await db.commit()
+
 # Проверка подписки
 async def check_subscription(user_id):
     async with aiosqlite.connect("database.db") as db:
         async with db.execute("SELECT sub_until FROM users WHERE id=?", (user_id,)) as cur:
             data = await cur.fetchone()
-    if not data or not data:
+    if not data or not data[0]:
         return False
-    sub_end = datetime.datetime.strptime(data, "%Y-%m-%d %H:%M:%S")  # Используем точный формат
+    sub_end = datetime.datetime.strptime(data[0], "%Y-%m-%d %H:%M:%S")  # Используем точный формат
     return datetime.datetime.now() < sub_end  # Проверка с точным временем
 
 # Статус подписки
@@ -63,7 +69,7 @@ async def get_subscription_status(user_id):
             data = await cur.fetchone()
     if data:
         try:
-            sub_end = datetime.datetime.strptime(data, "%Y-%m-%d %H:%M:%S")
+            sub_end = datetime.datetime.strptime(data[0], "%Y-%m-%d %H:%M:%S")
             return f"Подписка активна до {sub_end.strftime('%Y-%m-%d %H:%M:%S')}"
         except ValueError:
             return "❌ Подписка имеет неверный формат."
@@ -117,17 +123,17 @@ async def admin_panel(msg: types.Message):
     await msg.answer("Админ панель: выберите действие", reply_markup=admin_keyboard)
 
 # Статистика (для админа)
-@dp.message_handler(lambda message: message.text == ("📊 Статистика")
-async def stats(msg):
+@dp.message_handler(lambda message: message.text == "📊 Статистика")
+async def stats(msg: types.Message):
     if msg.from_user.id != ADMIN_ID:
         await msg.answer("❌ Вы не администратор.")
         return
 
     async with aiosqlite.connect("database.db") as db:
         async with db.execute("SELECT COUNT(*) FROM users") as cur:
-            total_users = (await cur.fetchone())
+            total_users = (await cur.fetchone())[0]
         async with db.execute("SELECT COUNT(*) FROM users WHERE sub_until IS NOT NULL") as cur:
-            subscribed_users = (await cur.fetchone())
+            subscribed_users = (await cur.fetchone())[0]
     
     await msg.answer(f"Общее количество пользователей: {total_users}\nПользователей с подпиской: {subscribed_users}")
 
@@ -148,7 +154,7 @@ async def input_id_for_subscription(msg: types.Message):
         return
 
     try:
-        user_id, months = int(msg.text.split()), int(msg.text.split())  # получаем ID и месяцы
+        user_id, months = int(msg.text.split()[1]), int(msg.text.split()[2])  # получаем ID и месяцы
     except (IndexError, ValueError):
         await msg.answer("❌ Неверный формат. Используйте команду в формате: /id <user_id> <months>")
         return
@@ -156,16 +162,15 @@ async def input_id_for_subscription(msg: types.Message):
     await add_subscription(user_id, months)
     await msg.answer(f"✅ Подписка успешно выдана пользователю {user_id} на {months} месяцев.")
 
-# Возвращение в главное меню
-@dp.message_handler(lambda message: message.text == "🔙 Назад в меню")
-async def back_to_menu(msg: types.Message):
-    keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add(KeyboardButton("🎲 Сгенерировать"))
-    keyboard.add(KeyboardButton("💎 Купить подписку"))
-    keyboard.add(KeyboardButton("📅 Статус подписки"))
-    keyboard.add(KeyboardButton("⚙️ Админ панель"))
+# Удаление подписки (админ)
+@dp.message_handler(lambda message: message.text == "❌ Убрать подписку")
+async def remove_subscription_handler(msg: types.Message):
+    if msg.from_user.id != ADMIN_ID:
+        await msg.answer("❌ Вы не администратор.")
+        return
 
-    if msg.from_user.id == ADMIN_ID:
-        keyboard.add(KeyboardButton("📊 Статистика")
+    await msg.answer("Введите ID пользователя для удаления подписки.")
 
-
+# Обработка ввода ID для удаления подписки
+@dp.message_handler(lambda message: message.text.startswith("/remove"))
+async def remove_subscription_input
