@@ -10,7 +10,7 @@ from aiogram.types import ReplyKeyboardMarkup
 from aiogram.utils import executor
 
 TOKEN = "8648186725:AAG8LqXwmsyEevpBDmi08wf6FCXXAOQq9pU"
-ADMIN_ID = 6228421196
+ADMIN_ID = 6228421196  # Заменить на свой ID
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
@@ -23,6 +23,14 @@ menu.add("🔎 Найти username")
 menu.add("🔤 Фильтр")
 menu.add("📊 Подписка")
 menu.add("💎 Купить")
+menu.add("♻️ Сбросить фильтр")
+menu.add("⚙️ Админ панель")
+
+admin_menu = ReplyKeyboardMarkup(resize_keyboard=True)
+admin_menu.add("📊 Статистика")
+admin_menu.add("🔒 Выдать подписку")
+admin_menu.add("🚫 Удалить пользователя")
+admin_menu.add("❌ Завершить админ панель")
 
 
 def generate_username(filter_letters=None):
@@ -258,49 +266,26 @@ async def buy(msg: types.Message):
     )
 
 
-@dp.message_handler(commands=["admin"])
-async def admin(msg: types.Message):
-
-    if msg.from_user.id != ADMIN_ID:
-        return
-
-    await msg.answer(
-        "⚙️ Админ команды:\n\n"
-        "выдать ID ДНЕЙ\n"
-        "стата"
-    )
+@dp.message_handler(lambda m: m.text == "♻️ Сбросить фильтр")
+async def reset_filter(msg: types.Message):
+    async with aiosqlite.connect("database.db") as db:
+        await db.execute(
+            "UPDATE users SET filter=NULL WHERE id=?",
+            (msg.from_user.id,)
+        )
+        await db.commit()
+    await msg.answer("✅ Фильтр букв сброшен. Генерация теперь будет из всех букв.")
 
 
-@dp.message_handler(lambda m: m.text.startswith("выдать"))
-async def give_sub(msg: types.Message):
-
-    if msg.from_user.id != ADMIN_ID:
-        return
-
-    try:
-
-        user_id = int(msg.text.split()[1])
-        days = int(msg.text.split()[2])
-
-        date = datetime.datetime.now() + datetime.timedelta(days=days)
-
-        async with aiosqlite.connect("database.db") as db:
-
-            await db.execute(
-                "INSERT OR REPLACE INTO users(id, sub_until) VALUES (?,?)",
-                (user_id, date.strftime("%Y-%m-%d"))
-            )
-
-            await db.commit()
-
-        await msg.answer("✅ Подписка выдана")
-
-    except:
-
-        await msg.answer("Формат:\nвыдать ID ДНЕЙ")
+@dp.message_handler(lambda m: m.text == "⚙️ Админ панель")
+async def admin_panel(msg: types.Message):
+    if msg.from_user.id == ADMIN_ID:
+        await msg.answer("⚙️ Админ панель", reply_markup=admin_menu)
+    else:
+        await msg.answer("❌ У вас нет прав доступа.")
 
 
-@dp.message_handler(lambda m: m.text == "стата")
+@dp.message_handler(lambda m: m.text == "📊 Статистика")
 async def stats(msg: types.Message):
 
     if msg.from_user.id != ADMIN_ID:
@@ -321,11 +306,48 @@ async def stats(msg: types.Message):
     )
 
 
-if __name__ == "__main__":
+@dp.message_handler(lambda m: m.text == "🔒 Выдать подписку")
+async def give_sub(msg: types.Message):
 
-    loop = asyncio.get_event_loop()
+    if msg.from_user.id != ADMIN_ID:
+        return
 
-    loop.run_until_complete(init_db())
+    await msg.answer("Введите ID пользователя и количество дней (например, 123456789 30):")
 
-    executor.start_polling(dp)
 
+@dp.message_handler(lambda m: m.text.startswith("123"))
+async def give_sub_days(msg: types.Message):
+
+    if msg.from_user.id != ADMIN_ID:
+        return
+
+    try:
+        user_id, days = map(int, msg.text.split())
+        date = datetime.datetime.now() + datetime.timedelta(days=days)
+
+        async with aiosqlite.connect("database.db") as db:
+            await db.execute(
+                "INSERT OR REPLACE INTO users(id, sub_until) VALUES (?,?)",
+                (user_id, date.strftime("%Y-%m-%d"))
+            )
+            await db.commit()
+
+        await msg.answer(f"✅ Подписка выдана пользователю {user_id} до {date.strftime('%Y-%m-%d')}.")
+
+    except:
+        await msg.answer("❌ Неверный формат. Используйте: ID ДНИ.")
+
+
+@dp.message_handler(lambda m: m.text == "🚫 Удалить пользователя")
+async def delete_user(msg: types.Message):
+
+    if msg.from_user.id != ADMIN_ID:
+        return
+
+    await msg.answer("Введите ID пользователя, которого хотите удалить:")
+
+
+@dp.message_handler(lambda m: m.text.startswith("123"))
+async def delete_user_from_db(msg: types.Message):
+
+    if msg.from_user.id != ADMIN_ID
