@@ -72,7 +72,17 @@ async def get_subscription_status(user_id):
 # Основной обработчик команды /start
 @dp.message_handler(commands=["start"])
 async def start(msg: types.Message):
-    await msg.answer("Привет! Я бот для поиска свободных username. Выбери команду из меню.")
+    # Главное меню с кнопками
+    keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.add(KeyboardButton("🔎 Найти username"))
+    keyboard.add(KeyboardButton("💎 Купить подписку"))
+    keyboard.add(KeyboardButton("📊 Статус подписки"))
+
+    # Если администратор, добавляем кнопку для статистики
+    if msg.from_user.id == ADMIN_ID:
+        keyboard.add(KeyboardButton("📊 Статистика"))
+
+    await msg.answer("Привет! Я бот для поиска свободных username. Выбери команду из меню.", reply_markup=keyboard)
 
 # Обработчик кнопки "Найти username"
 @dp.message_handler(lambda message: message.text == "🔎 Найти username")
