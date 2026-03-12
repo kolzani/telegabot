@@ -4,19 +4,21 @@ import json
 import time
 import logging
 import os
-from dotenv import load_dotenv
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 logging.basicConfig(level=logging.INFO)
 
-# ================== ЗАГРУЗКА ТОКЕНА ==================
-load_dotenv()  # загружает переменные из .env
+# ================== ТОКЕН ==================
+# Вариант 1: через переменную окружения (рекомендовано)
 BOT_TOKEN = os.getenv("8525866998:AAEYebntrTi01nBgeoFkSRq6oHLcW-lGPw4")
 
+# Вариант 2: напрямую в коде (небезопасно)
+# BOT_TOKEN = "8525866998:AAEYebntrTi01nBgeoFkSRq6oHLcW-lGPw4"
+
 if not BOT_TOKEN:
-    raise ValueError("❌ Токен не найден! Проверьте переменную окружения BOT_TOKEN")
+    raise ValueError("❌ Токен не найден! Установите переменную окружения BOT_TOKEN")
 
 ADMIN_ID = 6228421196
 DB_FILE = "subscriptions.json"
