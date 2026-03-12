@@ -7,14 +7,14 @@ import datetime
 import logging
 
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import ReplyKeyboardMarkup
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.utils import executor
 
 # Включаем логирование для отладки
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TOKEN = "8648186725:AAG8LqXwmsyEevpBDmi08wf6FCXXAOQq9pU"# Замените на свой токен
+TOKEN = "8648186725:AAG8LqXwmsyEevpBDmi08wf6FCXXAOQq9pU"  # Замените на свой токен
 ADMIN_ID = 6228421196  # Замените на свой ID
 
 bot = Bot(token=TOKEN)
@@ -299,10 +299,11 @@ async def give_sub(msg: types.Message):
         return
 
     await msg.answer("Введите ID пользователя и количество дней (например, 123456789 30):")
+    await bot.set_state(msg.from_user.id, "waiting_for_sub")
 
 
-@dp.message_handler(lambda m: m.text.startswith("123"))
-async def give_sub_days(msg: types.Message):
+@dp.message_handler(state="waiting_for_sub")
+async def process_sub_input(msg: types.Message, state):
     if msg.from_user.id != ADMIN_ID:
         return
 
@@ -318,9 +319,11 @@ async def give_sub_days(msg: types.Message):
             await db.commit()
 
         await msg.answer(f"✅ Подписка выдана пользователю {user_id} до {date.strftime('%Y-%m-%d')}.")
+        await state.finish()  # Завершаем ожидание
     except Exception as e:
         logger.error(f"Error issuing subscription for user {user_id}: {e}")
         await msg.answer("❌ Неверный формат. Используйте: ID ДНИ.")
+        await state.finish()  # Завершаем ожидание
 
 
 @dp.message_handler(lambda m: m.text == "🚫 Удалить пользователя")
