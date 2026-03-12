@@ -13,7 +13,7 @@ from telegram.error import RetryAfter, TimedOut, NetworkError
 logging.basicConfig(level=logging.INFO)
 
 # ================== TOKEN ==================
-BOT_TOKEN = os.environ.get("BOT_TOKEN")  # обязательно вписать токен
+BOT_TOKEN = 8736467160:AAGQj5tu1N8VQyD6W_GzeRGjP496jH-NYRk  # обязательно вписать токен
 ADMIN_ID = 6228421196
 DB_FILE = "subscriptions.json"
 
@@ -278,3 +278,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
