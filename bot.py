@@ -117,7 +117,7 @@ async def admin_panel(msg: types.Message):
     await msg.answer("Админ панель: выберите действие", reply_markup=admin_keyboard)
 
 # Статистика (для админа)
-@dp.message_handler(lambda message: message.text == "📊 Статистика")
+@dp.message_handler(lambda message: message.text == ("📊 Статистика")
 async def stats(msg: types.Message):
     if msg.from_user.id != ADMIN_ID:
         await msg.answer("❌ Вы не администратор.")
@@ -166,4 +166,5 @@ async def back_to_menu(msg: types.Message):
     keyboard.add(KeyboardButton("⚙️ Админ панель"))
 
     if msg.from_user.id == ADMIN_ID:
-        keyboard.add(KeyboardButton("📊 Статистика
+        keyboard.add(KeyboardButton("📊 Статистика")
+
