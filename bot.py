@@ -7,19 +7,19 @@ import os
 import asyncio
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from telegram.error import RetryAfter, TimedOut, NetworkError, BadRequest
 
 logging.basicConfig(level=logging.INFO)
 
 # ================== TOKEN ==================
-BOT_TOKEN = os.environ.get("BOT_TOKEN")  # через Railway Shared Variable / REF
+BOT_TOKEN = os.environ.get("BOT_TOKEN")  # Убедись, что переменная окружения задана
 
 ADMIN_ID = 6228421196
 DB_FILE = "subscriptions.json"
 
 # ================= АНТИ-БАН =================
-semaphore = asyncio.Semaphore(3)
+semaphore = asyncio.Semaphore(2)  # Максимум параллельных запросов к Telegram
 
 # ================= ЛОГ ПРОВЕРОК =================
 checked_usernames_count = 0
@@ -63,52 +63,48 @@ def remove_subscription(user_id):
 # ================= USERNAME =================
 def generate_username():
     letters = string.ascii_lowercase
-    mode = random.randint(1, 10)
-    if mode <= 6:
-        return ''.join(random.choice(letters) for _ in range(5))
-    elif mode <= 8:
-        a = random.choice(letters)
-        b = random.choice(letters)
-        return a + b + a + b + a
-    elif mode == 9:
-        c = random.choice(letters)
-        return c * 5
-    else:
-        rare = "qxzjkv"
-        return ''.join(random.choice(rare) for _ in range(5))
+    return ''.join(random.choice(letters) for _ in range(6))  # 6 букв
 
-# ================= ПРОВЕРКА USERNAME =================
 async def check_username(bot, username):
     global checked_usernames_count
     async with semaphore:
         try:
             await bot.get_chat(f"@{username}")
-            return False
+            checked_usernames_count += 1
+            return False  # занято
+        except BadRequest as e:
+            if "not found" in str(e):
+                checked_usernames_count += 1
+                return True  # свободно
+            else:
+                await asyncio.sleep(1)
+                return False
         except RetryAfter as e:
             await asyncio.sleep(e.retry_after)
             return False
         except (TimedOut, NetworkError):
             await asyncio.sleep(1)
             return False
-        except Exception:
-            checked_usernames_count += 1
-            return True
 
 async def check_batch(bot, usernames):
+    results = []
     tasks = [check_username(bot, u) for u in usernames]
-    results = await asyncio.gather(*tasks)
+    for coro in asyncio.as_completed(tasks):
+        res = await coro
+        results.append(res)
+        await asyncio.sleep(0.5)  # пауза между запросами
     free = [usernames[i] for i, res in enumerate(results) if res]
     return free
 
 async def find_usernames(bot, amount=10):
     found = []
     while len(found) < amount:
-        batch = [generate_username() for _ in range(10)]
+        batch = [generate_username() for _ in range(5)]
         free = await check_batch(bot, batch)
         for u in free:
             if u not in found:
                 found.append(u)
-        await asyncio.sleep(random.uniform(0.5, 1.0))
+        await asyncio.sleep(1)  # пауза между батчами
     return found[:amount]
 
 # ================= СТАТИСТИКА =================
@@ -136,12 +132,8 @@ def admin_menu():
             InlineKeyboardButton("📊 Статистика", callback_data="stats")
         ],
         [
-            InlineKeyboardButton("💎 Подписки", callback_data="subs"),
-            InlineKeyboardButton("📈 Лог username", callback_data="log")
-        ],
-        [
-            InlineKeyboardButton("➕ Добавить подписку", callback_data="addsub"),
-            InlineKeyboardButton("➖ Убрать подписку", callback_data="remsub")
+            InlineKeyboardButton("💎 Выдать подписку", callback_data="addsub"),
+            InlineKeyboardButton("❌ Снять подписку", callback_data="remsub")
         ],
         [
             InlineKeyboardButton("⬅ Назад", callback_data="back")
@@ -156,7 +148,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db[str(user_id)] = 0
         save_db()
     await update.message.reply_text(
-        "🤖 Бот генерации 5-буквенных username",
+        "🤖 Бот генерации 6-буквенных username",
         reply_markup=menu(user_id)
     )
 
@@ -167,30 +159,11 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
 
     try:
-        if query.data == "gen":
-            if not has_subscription(user_id):
-                await query.message.edit_text(
-                    "❌ Генерация доступна только по подписке",
-                    reply_markup=menu(user_id)
-                )
-                return
-            await query.message.edit_text("🔍 Ищу свободные username...")
-            usernames = await find_usernames(context.bot, 10)
-            text = "🎯 Свободные username:\n\n" + "\n".join(f"@{u}" for u in usernames) if usernames else "❌ Не удалось найти свободные username"
-            try:
-                await query.message.edit_text(text, reply_markup=menu(user_id))
-            except BadRequest as e:
-                if "Message is not modified" in str(e):
-                    pass
-                else:
-                    raise
-
-        elif query.data == "buy":
+        if query.data == "buy":
             await query.message.edit_text(
-                "Напишите @wvmmy для покупки\nЦена: 100 после 75 а уже после 3 покупки 50 руб / месяц",
+                "Напишите @wvmmy для покупки\nЦена: 100 после 75, а уже после 3 покупки 50 руб / месяц",
                 reply_markup=menu(user_id)
             )
-
         elif query.data == "status":
             expire = db.get(str(user_id), 0)
             if expire > time.time():
@@ -201,13 +174,24 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 text = "❌ Подписки нет"
             await query.message.edit_text(text, reply_markup=menu(user_id))
-
+        elif query.data == "gen":
+            if not has_subscription(user_id):
+                await query.message.edit_text(
+                    "❌ Генерация доступна только по подписке",
+                    reply_markup=menu(user_id)
+                )
+                return
+            await query.message.edit_text("🔍 Ищу свободные username...")
+            usernames = await find_usernames(context.bot, 5)
+            if usernames:
+                text = "🎯 Свободные username:\n\n" + "\n".join(f"@{u}" for u in usernames)
+            else:
+                text = "❌ Не удалось найти"
+            await query.message.edit_text(text, reply_markup=menu(user_id))
         elif query.data == "admin" and user_id == ADMIN_ID:
             await query.message.edit_text("⚙️ Админ панель", reply_markup=admin_menu())
-
         elif query.data == "users" and user_id == ADMIN_ID:
             await query.message.edit_text(f"👥 Пользователей: {len(db)}", reply_markup=admin_menu())
-
         elif query.data == "stats" and user_id == ADMIN_ID:
             total, active, expired = get_stats()
             text = f"""
@@ -221,68 +205,47 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🕒 {time.strftime("%H:%M:%S")}
 """
             await query.message.edit_text(text, reply_markup=admin_menu())
-
-        elif query.data == "log" and user_id == ADMIN_ID:
-            await query.message.edit_text(f"🔍 Проверено username: {checked_usernames_count}", reply_markup=admin_menu())
-
         elif query.data == "addsub" and user_id == ADMIN_ID:
-            await query.message.reply_text("Введите USER_ID DAYS\nНапример: 6228421196 30")
-            context.user_data["action"] = "addsub"
-
+            await query.message.edit_text("Введите: /givesub USER_ID DAYS")
         elif query.data == "remsub" and user_id == ADMIN_ID:
-            await query.message.reply_text("Введите USER_ID для удаления подписки\nНапример: 6228421196")
-            context.user_data["action"] = "remsub"
-
+            await query.message.edit_text("Введите: /removesub USER_ID")
         elif query.data == "back":
             await query.message.edit_text("Главное меню", reply_markup=menu(user_id))
+    except BadRequest:
+        pass  # игнорируем ошибки "Message is not modified"
 
-    except BadRequest as e:
-        if "Message is not modified" in str(e):
-            pass
-        else:
-            raise
-
-# ================= АДМИН ВВОД =================
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
+# ================= АДМИН КОМАНДЫ =================
+async def givesub(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
         return
-
-    if "action" not in context.user_data:
+    if len(context.args) != 2:
+        await update.message.reply_text("/givesub USER_ID DAYS")
         return
+    user = int(context.args[0])
+    days = int(context.args[1])
+    add_subscription(user, days)
+    await update.message.reply_text("✅ Подписка выдана")
 
-    text = update.message.text.strip()
-
-    if context.user_data["action"] == "addsub":
-        try:
-            parts = text.split()
-            uid = int(parts[0])
-            days = int(parts[1])
-            add_subscription(uid, days)
-            await update.message.reply_text(f"✅ Подписка на {days} дн. выдана пользователю {uid}")
-        except:
-            await update.message.reply_text("❌ Ошибка! Введите USER_ID и DAYS через пробел.")
-        context.user_data.pop("action")
-
-    elif context.user_data["action"] == "remsub":
-        try:
-            uid = int(text)
-            remove_subscription(uid)
-            await update.message.reply_text(f"❌ Подписка удалена у пользователя {uid}")
-        except:
-            await update.message.reply_text("❌ Ошибка! Введите правильный USER_ID.")
-        context.user_data.pop("action")
+async def removesub(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if len(context.args) != 1:
+        await update.message.reply_text("/removesub USER_ID")
+        return
+    user = int(context.args[0])
+    remove_subscription(user)
+    await update.message.reply_text("❌ Подписка удалена")
 
 # ================= ЗАПУСК =================
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("givesub", givesub))
+    app.add_handler(CommandHandler("removesub", removesub))
     app.add_handler(CallbackQueryHandler(buttons))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))  # ловим текст админа
 
     print("Бот запущен")
-    app.run_polling()  # без while True, polling сам перезапускается
+    app.run_polling(poll_interval=1)  # единственный polling, без вебхуков
 
 if __name__ == "__main__":
     main()
