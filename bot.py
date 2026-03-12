@@ -357,3 +357,4 @@ async def delete_user_from_db(msg: types.Message):
         user_id = int(msg.text.split()[0])
 
         async with aiosqlite.connect("database.db") as db:
+            await db
