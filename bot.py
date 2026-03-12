@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO)
 
 # ================== ТОКЕН ==================
 # Вариант 1: через переменную окружения (рекомендовано)
-BOT_TOKEN = os.getenv("8525866998:AAEYebntrTi01nBgeoFkSRq6oHLcW-lGPw4")
+BOT_TOKEN = os.getenv("8717987578:AAF1i8ycyaOrSlFlDS727OUcfqXLcAv7v9k")
 
 # Вариант 2: напрямую в коде (небезопасно)
 # BOT_TOKEN = "8525866998:AAEYebntrTi01nBgeoFkSRq6oHLcW-lGPw4"
@@ -180,3 +180,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
