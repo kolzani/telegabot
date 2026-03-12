@@ -33,6 +33,19 @@ admin_menu.add(KeyboardButton("🔒 Выдать подписку"))
 admin_menu.add(KeyboardButton("❌ Убрать подписку"))
 admin_menu.add(KeyboardButton("🚫 Завершить админ панель"))
 
+# Инициализация базы данных
+async def init_db():
+    async with aiosqlite.connect("database.db") as db:
+        # Создаем таблицу для пользователей, если она не существует
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY,
+                sub_until TEXT
+            )
+        """)
+        await db.commit()
+    print("Database initialized successfully.")
+
 # Генерация 5-значных username без цифр
 def generate_usernames(count=5):
     return [''.join(random.choice(string.ascii_lowercase) for _ in range(5)) for _ in range(count)]
@@ -193,9 +206,9 @@ async def input_id_for_removal(msg: types.Message):
 
     # Получаем ID из сообщения
     try:
-        user_id = int(msg.text.split()[1])  # получаем ID пользователя из команды
+        user_id = int(msg.text.split()[1])  # получаем ID пользователя для удаления подписки
     except (IndexError, ValueError):
-        await msg.answer("❌ Неверный формат ID. Используйте команду в формате: /remove_id <user_id>")
+        await msg.answer("❌ Неверный формат. Используйте команду в формате: /remove_id <user_id>")
         return
 
     # Удаляем подписку у пользователя
@@ -215,5 +228,5 @@ async def end_admin_panel(msg: types.Message):
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(init_db())
+    loop.run_until_complete(init_db())  # Инициализация базы данных перед запуском бота
     executor.start_polling(dp, skip_updates=True)
