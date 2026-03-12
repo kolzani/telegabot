@@ -14,7 +14,7 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-BOT_TOKEN = "7841222200:AAHzJoRS1p5O_NyI0Px9XT8aW5b0LI9QGjA"
+BOT_TOKEN = "8525866998:AAEYebntrTi01nBgeoFkSRq6oHLcW-lGPw4"
 ADMIN_ID = 6228421196
 DB_FILE = "subscriptions.json"
 
@@ -297,3 +297,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
