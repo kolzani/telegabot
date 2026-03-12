@@ -4,7 +4,7 @@ import string
 import aiosqlite
 import datetime
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils import executor
 import logging
 
@@ -85,6 +85,12 @@ async def get_admin_stats():
             subscribed_users = (await cur.fetchone())[0]
     return total_users, subscribed_users
 
+# Генерация кнопки для ввода ID
+def generate_id_button():
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    keyboard.add(InlineKeyboardButton("Введите ID пользователя", callback_data="enter_id"))
+    return keyboard
+
 # Обработчик команды /start
 @dp.message_handler(commands=["start"])
 async def start(msg: types.Message):
@@ -136,9 +142,9 @@ async def give_subscription(msg: types.Message):
     if msg.from_user.id != ADMIN_ID:
         await msg.answer("❌ Вы не администратор.")
         return
-    user_id = int(msg.text.split()[1])  # Ввод ID пользователя в сообщении
-    await add_subscription(user_id)
-    await msg.answer(f"Подписка успешно выдана пользователю {user_id}.")
+
+    # Попросим администратора ввести ID пользователя для подписки
+    await msg.answer("Пожалуйста, введите ID пользователя, которому нужно выдать подписку.", reply_markup=generate_id_button())
 
 # Удаление подписки
 @dp.message_handler(lambda message: message.text == "❌ Убрать подписку")
@@ -146,11 +152,55 @@ async def remove_subscription(msg: types.Message):
     if msg.from_user.id != ADMIN_ID:
         await msg.answer("❌ Вы не администратор.")
         return
-    user_id = int(msg.text.split()[1])  # Ввод ID пользователя в сообщении
+
+    # Попросим администратора ввести ID пользователя для удаления подписки
+    await msg.answer("Пожалуйста, введите ID пользователя, у которого нужно удалить подписку.", reply_markup=generate_id_button())
+
+# Обработка callback'ов от inline кнопок
+@dp.callback_query_handler(lambda c: c.data == "enter_id")
+async def enter_id_handler(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id)
+    # Просим администратора ввести ID пользователя
+    await bot.send_message(callback_query.from_user.id, "Введите ID пользователя в формате: /id <user_id>")
+
+# Обработчик команды ввода ID пользователя для выдачи подписки
+@dp.message_handler(lambda message: message.text.startswith("/id"))
+async def input_id_for_subscription(msg: types.Message):
+    if msg.from_user.id != ADMIN_ID:
+        await msg.answer("❌ Вы не администратор.")
+        return
+
+    # Получаем ID из сообщения
+    try:
+        user_id = int(msg.text.split()[1])  # получаем ID пользователя из команды
+    except (IndexError, ValueError):
+        await msg.answer("❌ Неверный формат ID. Используйте команду в формате: /id <user_id>")
+        return
+
+    # Выдаем подписку пользователю
+    await add_subscription(user_id)
+    await msg.answer(f"✅ Подписка успешно выдана пользователю {user_id}.")
+
+# Обработчик команды ввода ID пользователя для удаления подписки
+@dp.message_handler(lambda message: message.text.startswith("/remove_id"))
+async def input_id_for_removal(msg: types.Message):
+    if msg.from_user.id != ADMIN_ID:
+        await msg.answer("❌ Вы не администратор.")
+        return
+
+    # Получаем ID из сообщения
+    try:
+        user_id = int(msg.text.split()[1])  # получаем ID пользователя из команды
+    except (IndexError, ValueError):
+        await msg.answer("❌ Неверный формат ID. Используйте команду в формате: /remove_id <user_id>")
+        return
+
+    # Удаляем подписку у пользователя
     async with aiosqlite.connect("database.db") as db:
         await db.execute("UPDATE users SET sub_until=NULL WHERE id=?", (user_id,))
         await db.commit()
-    await msg.answer(f"Подписка успешно удалена у пользователя {user_id}.")
+
+    await msg.answer(f"❌ Подписка успешно удалена у пользователя {user_id}.")
 
 # Завершение админ панели
 @dp.message_handler(lambda message: message.text == "🚫 Завершить админ панель")
@@ -163,4 +213,4 @@ async def end_admin_panel(msg: types.Message):
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.run_until_complete(init_db())
-    executor.start_polling(dp)
+    executor.start_polling(dp, skip_updates=True)
